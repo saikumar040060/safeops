@@ -1,3 +1,8 @@
+import uuid
+from datetime import UTC, datetime
+
+from app.models import Deployment, Service
+from app.models.enums import DeploymentEnvironment
 from app.tools import tool_registry
 
 
@@ -58,3 +63,36 @@ def test_deploy_production_changes_state(seeded_db):
     state = get_deployment.execute({"service_name": "checkout-service"}, seeded_db)
     assert state.data["production"]["version"] == "1.5.0"
     assert state.data["staging"]["version"] == "1.5.0-rc1"
+
+
+def test_get_deployment_breaks_timestamp_ties_by_id(seeded_db):
+    service = seeded_db.query(Service).filter_by(name="checkout-service").one()
+    deployed_at = datetime(2100, 1, 1, tzinfo=UTC)
+    lower_id = uuid.UUID(int=1)
+    higher_id = uuid.UUID(int=2)
+    seeded_db.add_all(
+        [
+            Deployment(
+                id=lower_id,
+                service_id=service.id,
+                environment=DeploymentEnvironment.STAGING,
+                version="tie-lower-id",
+                deployed_at=deployed_at,
+            ),
+            Deployment(
+                id=higher_id,
+                service_id=service.id,
+                environment=DeploymentEnvironment.STAGING,
+                version="tie-higher-id",
+                deployed_at=deployed_at,
+            ),
+        ]
+    )
+    seeded_db.commit()
+
+    result = tool_registry.get("get_deployment").execute(
+        {"service_name": "checkout-service"}, seeded_db
+    )
+
+    assert result.success is True
+    assert result.data["staging"]["version"] == "tie-higher-id"

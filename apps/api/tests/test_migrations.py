@@ -9,7 +9,20 @@ from alembic import command
 from app.core.database import Base
 
 API_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_TABLES = {"agents", "tools", "executions", "audit_events", "approval_requests"}
+EXPECTED_TABLES = {
+    "agents",
+    "tools",
+    "executions",
+    "audit_events",
+    "approval_requests",
+    "customers",
+    "payments",
+    "refunds",
+    "support_tickets",
+    "services",
+    "deployments",
+    "service_logs",
+}
 EXPECTED_CHECKS = {
     "agents": {
         "agentstatus": {"ACTIVE", "DISABLED"},
@@ -40,6 +53,9 @@ EXPECTED_CHECKS = {
             "EXECUTION_COMPLETED",
         }
     },
+    "payments": {"paymentstatus": {"SUCCEEDED", "REFUNDED"}},
+    "deployments": {"deploymentenvironment": {"STAGING", "PRODUCTION"}},
+    "service_logs": {"loglevel": {"INFO", "WARN", "ERROR"}},
 }
 
 

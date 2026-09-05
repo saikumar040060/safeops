@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Payment, Refund
@@ -32,20 +33,24 @@ class RefundPaymentTool(BaseTool):
     input_schema = RefundPaymentInput
     output_schema = RefundPaymentOutput
 
+    @staticmethod
+    def _replay(refund: Refund, db: Session) -> RefundPaymentOutput:
+        payment = db.get(Payment, refund.payment_id)
+        return RefundPaymentOutput(
+            payment_id=payment.payment_id if payment else str(refund.payment_id),
+            refund_amount=refund.amount,
+            reason=refund.reason,
+            status=PaymentStatus.REFUNDED.value,
+            created_at=refund.created_at,
+            idempotent_replay=True,
+        )
+
     def _run(self, input: RefundPaymentInput, db: Session) -> RefundPaymentOutput:
         existing_refund = db.scalar(
             select(Refund).where(Refund.idempotency_key == input.idempotency_key)
         )
         if existing_refund is not None:
-            payment = db.get(Payment, existing_refund.payment_id)
-            return RefundPaymentOutput(
-                payment_id=payment.payment_id if payment else input.payment_id,
-                refund_amount=existing_refund.amount,
-                reason=existing_refund.reason,
-                status=PaymentStatus.REFUNDED.value,
-                created_at=existing_refund.created_at,
-                idempotent_replay=True,
-            )
+            return self._replay(existing_refund, db)
 
         payment = db.scalar(select(Payment).where(Payment.payment_id == input.payment_id))
         if payment is None:
@@ -70,7 +75,16 @@ class RefundPaymentTool(BaseTool):
         )
         payment.status = PaymentStatus.REFUNDED
         db.add(refund)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            existing_refund = db.scalar(
+                select(Refund).where(Refund.idempotency_key == input.idempotency_key)
+            )
+            if existing_refund is None:
+                raise
+            return self._replay(existing_refund, db)
         db.refresh(refund)
 
         return RefundPaymentOutput(

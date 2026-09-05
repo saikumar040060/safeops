@@ -22,7 +22,7 @@ def _latest_deployment(
     return db.scalar(
         select(Deployment)
         .where(Deployment.service_id == service.id, Deployment.environment == environment)
-        .order_by(Deployment.deployed_at.desc())
+        .order_by(Deployment.deployed_at.desc(), Deployment.id.desc())
         .limit(1)
     )
 
