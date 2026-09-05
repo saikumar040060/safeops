@@ -172,7 +172,7 @@ class ToolGateway:
                     ToolRequest(
                         execution_id=execution.id,
                         agent_id=agent.id,
-                        tool_id=tool_row.id,
+                        tool_id=tool_row.id if tool_row else None,
                         tool_name=tool_name,
                         arguments=arguments,
                         status=ToolRequestStatus.DENIED,
@@ -251,7 +251,45 @@ class ToolGateway:
             ],
         )
 
-        result = tool.execute(arguments, db)
+        try:
+            result = tool.execute(arguments, db)
+        except Exception:
+            # A tool may leave the session in a failed transaction. Restore it
+            # before recording the gateway-level failure; never retry execution.
+            db.rollback()
+            error = {
+                "code": "TOOL_EXECUTION_ERROR",
+                "message": "Tool execution raised an unexpected error",
+            }
+            self._commit_chunk(
+                db,
+                execution.id,
+                lambda seq: [
+                    AuditEvent(
+                        execution_id=execution.id,
+                        sequence=seq,
+                        event_type=AuditEventType.TOOL_FAILED,
+                        actor=agent.name,
+                        event_metadata={"tool_name": tool_name, "error": error},
+                    ),
+                    ToolRequest(
+                        execution_id=execution.id,
+                        agent_id=agent.id,
+                        tool_id=tool_row.id,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        status=ToolRequestStatus.FAILED,
+                        completed_at=datetime.now(UTC),
+                        error=error,
+                    ),
+                ],
+            )
+            return GatewayResult(
+                status="FAILED",
+                tool_name=tool_name,
+                decision="ALLOW",
+                reason=error["message"],
+            )
 
         if result.success:
             self._commit_chunk(
@@ -327,7 +365,10 @@ class ToolGateway:
             try:
                 db.commit()
                 return
-            except IntegrityError:
+            except IntegrityError as exc:
                 db.rollback()
+                constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+                if constraint_name != "uq_audit_events_execution_sequence":
+                    raise
                 if attempt == 4:
                     raise

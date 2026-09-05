@@ -202,6 +202,71 @@ def test_missing_agent(seeded_db):
     assert len(_events(seeded_db, execution.id)) == 0
 
 
+def test_registry_tool_missing_database_row_defaults_to_deny(seeded_db, monkeypatch):
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent)
+
+    from app.services import tool_gateway
+
+    registered_tool = tool_gateway.tool_registry.get("read_customer")
+    monkeypatch.setattr(tool_gateway.tool_registry, "get", lambda _name: registered_tool)
+
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="registered_but_not_seeded",
+        arguments={"customer_id": "CUST-1001"},
+        db=seeded_db,
+    )
+
+    assert result.status == "BLOCKED"
+    assert result.decision == "DENY"
+    request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
+    assert request.status.value == "DENIED"
+    assert request.tool_id is None
+    assert [event.event_type.value for event in _events(seeded_db, execution.id)] == [
+        "TOOL_REQUESTED",
+        "PERMISSION_CHECKED",
+        "ACTION_DENIED",
+    ]
+
+
+def test_unexpected_tool_exception_is_persisted_as_failure(seeded_db, monkeypatch):
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent)
+
+    from app.services import tool_gateway
+
+    registered_tool = tool_gateway.tool_registry.get("read_customer")
+
+    def raise_unexpected(_arguments, db):
+        db.rollback()
+        raise RuntimeError("sensitive internal detail")
+
+    monkeypatch.setattr(registered_tool, "execute", raise_unexpected)
+
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="read_customer",
+        arguments={"customer_id": "CUST-1001"},
+        db=seeded_db,
+    )
+
+    assert result.status == "FAILED"
+    assert result.reason == "Tool execution raised an unexpected error"
+    request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
+    assert request.status.value == "FAILED"
+    assert request.error["code"] == "TOOL_EXECUTION_ERROR"
+    assert "sensitive internal detail" not in str(request.error)
+    assert [event.event_type.value for event in _events(seeded_db, execution.id)] == [
+        "TOOL_REQUESTED",
+        "PERMISSION_CHECKED",
+        "ACTION_ALLOWED",
+        "TOOL_FAILED",
+    ]
+
+
 def test_missing_execution(seeded_db):
     agent = _agent(seeded_db, "support-agent")
 
