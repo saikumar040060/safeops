@@ -1,0 +1,333 @@
+import json
+import uuid
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
+
+from pydantic import BaseModel, ValidationError
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.models import Agent, AgentToolPermission, AuditEvent, Execution, Tool, ToolRequest
+from app.models.enums import AuditEventType, ExecutionStatus, PermissionType, ToolRequestStatus
+from app.tools import ToolNotFoundError, tool_registry
+
+NON_EXECUTABLE_STATUSES = {
+    ExecutionStatus.COMPLETED,
+    ExecutionStatus.FAILED,
+    ExecutionStatus.BLOCKED,
+}
+
+
+def _json_safe(value: Any) -> Any:
+    return json.loads(json.dumps(value, default=str))
+
+
+class GatewayResult(BaseModel):
+    status: str
+    tool_name: str | None = None
+    tool_result: dict[str, Any] | None = None
+    decision: str | None = None
+    reason: str | None = None
+
+
+class ToolGateway:
+    def execute(
+        self,
+        *,
+        agent_id: uuid.UUID,
+        execution_id: uuid.UUID,
+        tool_name: str,
+        arguments: dict[str, Any],
+        db: Session,
+    ) -> GatewayResult:
+        agent = db.get(Agent, agent_id)
+        if agent is None:
+            return GatewayResult(status="FAILED", tool_name=tool_name, reason="Agent not found")
+
+        execution = db.get(Execution, execution_id)
+        if execution is None:
+            return GatewayResult(status="FAILED", tool_name=tool_name, reason="Execution not found")
+
+        if execution.agent_id != agent.id:
+            return GatewayResult(
+                status="FAILED",
+                tool_name=tool_name,
+                reason="Execution does not belong to this agent",
+            )
+
+        if execution.status in NON_EXECUTABLE_STATUSES:
+            return GatewayResult(
+                status="FAILED",
+                tool_name=tool_name,
+                reason=f"Execution is {execution.status.value} and cannot accept new tool calls",
+            )
+
+        arguments = _json_safe(arguments)
+        safe_args = {"tool_name": tool_name, "arguments": arguments}
+
+        self._commit_chunk(
+            db,
+            execution.id,
+            lambda seq: [
+                AuditEvent(
+                    execution_id=execution.id,
+                    sequence=seq,
+                    event_type=AuditEventType.TOOL_REQUESTED,
+                    actor=agent.name,
+                    event_metadata=safe_args,
+                )
+            ],
+        )
+
+        try:
+            tool = tool_registry.get(tool_name)
+        except ToolNotFoundError:
+            self._commit_chunk(
+                db,
+                execution.id,
+                lambda seq: [
+                    AuditEvent(
+                        execution_id=execution.id,
+                        sequence=seq,
+                        event_type=AuditEventType.TOOL_FAILED,
+                        actor=agent.name,
+                        event_metadata={"reason": "unknown tool"},
+                    ),
+                    ToolRequest(
+                        execution_id=execution.id,
+                        agent_id=agent.id,
+                        tool_id=None,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        status=ToolRequestStatus.FAILED,
+                        completed_at=datetime.now(UTC),
+                        error={"code": "TOOL_NOT_FOUND", "message": f"No tool named '{tool_name}'"},
+                    ),
+                ],
+            )
+            return GatewayResult(status="FAILED", tool_name=tool_name, reason="Unknown tool")
+
+        tool_row = db.scalar(select(Tool).where(Tool.name == tool_name))
+
+        try:
+            tool.input_schema.model_validate(arguments)
+        except ValidationError as exc:
+            validation_message = str(exc)
+            self._commit_chunk(
+                db,
+                execution.id,
+                lambda seq: [
+                    AuditEvent(
+                        execution_id=execution.id,
+                        sequence=seq,
+                        event_type=AuditEventType.TOOL_FAILED,
+                        actor=agent.name,
+                        event_metadata={"reason": "invalid arguments"},
+                    ),
+                    ToolRequest(
+                        execution_id=execution.id,
+                        agent_id=agent.id,
+                        tool_id=tool_row.id if tool_row else None,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        status=ToolRequestStatus.FAILED,
+                        completed_at=datetime.now(UTC),
+                        error={"code": "INVALID_ARGUMENTS", "message": validation_message},
+                    ),
+                ],
+            )
+            return GatewayResult(status="FAILED", tool_name=tool_name, reason="Invalid arguments")
+
+        permission = None
+        if tool_row is not None:
+            permission = db.scalar(
+                select(AgentToolPermission).where(
+                    AgentToolPermission.agent_id == agent.id,
+                    AgentToolPermission.tool_id == tool_row.id,
+                )
+            )
+        permission_type = permission.permission if permission else PermissionType.DENY
+
+        if permission_type == PermissionType.DENY:
+            self._commit_chunk(
+                db,
+                execution.id,
+                lambda seq: [
+                    AuditEvent(
+                        execution_id=execution.id,
+                        sequence=seq,
+                        event_type=AuditEventType.PERMISSION_CHECKED,
+                        actor=agent.name,
+                        event_metadata={"tool_name": tool_name, "permission": "DENY"},
+                    ),
+                    AuditEvent(
+                        execution_id=execution.id,
+                        sequence=seq + 1,
+                        event_type=AuditEventType.ACTION_DENIED,
+                        actor=agent.name,
+                        event_metadata={"tool_name": tool_name},
+                    ),
+                    ToolRequest(
+                        execution_id=execution.id,
+                        agent_id=agent.id,
+                        tool_id=tool_row.id,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        status=ToolRequestStatus.DENIED,
+                        completed_at=datetime.now(UTC),
+                        error={
+                            "code": "PERMISSION_DENIED",
+                            "message": "Agent does not have permission",
+                        },
+                    ),
+                ],
+            )
+            return GatewayResult(
+                status="BLOCKED",
+                tool_name=tool_name,
+                decision="DENY",
+                reason="Agent does not have permission",
+            )
+
+        if permission_type == PermissionType.CONDITIONAL:
+            self._commit_chunk(
+                db,
+                execution.id,
+                lambda seq: [
+                    AuditEvent(
+                        execution_id=execution.id,
+                        sequence=seq,
+                        event_type=AuditEventType.PERMISSION_CHECKED,
+                        actor=agent.name,
+                        event_metadata={"tool_name": tool_name, "permission": "CONDITIONAL"},
+                    ),
+                    AuditEvent(
+                        execution_id=execution.id,
+                        sequence=seq + 1,
+                        event_type=AuditEventType.POLICY_EVALUATION_REQUIRED,
+                        actor=agent.name,
+                        event_metadata={"tool_name": tool_name},
+                    ),
+                    ToolRequest(
+                        execution_id=execution.id,
+                        agent_id=agent.id,
+                        tool_id=tool_row.id,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        status=ToolRequestStatus.REQUESTED,
+                    ),
+                ],
+            )
+            return GatewayResult(
+                status="NEEDS_POLICY_EVALUATION",
+                tool_name=tool_name,
+                decision="CONDITIONAL",
+                reason="Requires policy evaluation",
+            )
+
+        # ALLOW: record the decision, then execute. The tool owns its own
+        # transaction (it may commit/rollback internally, e.g. refund_payment's
+        # idempotency retry), so this is a separate commit from what follows.
+        self._commit_chunk(
+            db,
+            execution.id,
+            lambda seq: [
+                AuditEvent(
+                    execution_id=execution.id,
+                    sequence=seq,
+                    event_type=AuditEventType.PERMISSION_CHECKED,
+                    actor=agent.name,
+                    event_metadata={"tool_name": tool_name, "permission": "ALLOW"},
+                ),
+                AuditEvent(
+                    execution_id=execution.id,
+                    sequence=seq + 1,
+                    event_type=AuditEventType.ACTION_ALLOWED,
+                    actor=agent.name,
+                    event_metadata={"tool_name": tool_name},
+                ),
+            ],
+        )
+
+        result = tool.execute(arguments, db)
+
+        if result.success:
+            self._commit_chunk(
+                db,
+                execution.id,
+                lambda seq: [
+                    AuditEvent(
+                        execution_id=execution.id,
+                        sequence=seq,
+                        event_type=AuditEventType.TOOL_EXECUTED,
+                        actor=agent.name,
+                        event_metadata={"tool_name": tool_name},
+                    ),
+                    ToolRequest(
+                        execution_id=execution.id,
+                        agent_id=agent.id,
+                        tool_id=tool_row.id,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        status=ToolRequestStatus.EXECUTED,
+                        completed_at=datetime.now(UTC),
+                        result=result.data,
+                    ),
+                ],
+            )
+            return GatewayResult(
+                status="EXECUTED", tool_name=tool_name, tool_result=result.data, decision="ALLOW"
+            )
+
+        error = result.error.model_dump() if result.error else {"code": "UNKNOWN", "message": ""}
+        self._commit_chunk(
+            db,
+            execution.id,
+            lambda seq: [
+                AuditEvent(
+                    execution_id=execution.id,
+                    sequence=seq,
+                    event_type=AuditEventType.TOOL_FAILED,
+                    actor=agent.name,
+                    event_metadata={"tool_name": tool_name, "error": error},
+                ),
+                ToolRequest(
+                    execution_id=execution.id,
+                    agent_id=agent.id,
+                    tool_id=tool_row.id,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    status=ToolRequestStatus.FAILED,
+                    completed_at=datetime.now(UTC),
+                    error=error,
+                ),
+            ],
+        )
+        return GatewayResult(
+            status="FAILED", tool_name=tool_name, decision="ALLOW", reason=error.get("message")
+        )
+
+    @staticmethod
+    def _commit_chunk(
+        db: Session, execution_id: uuid.UUID, build_rows: Callable[[int], list[Any]]
+    ) -> None:
+        for attempt in range(5):
+            base_seq = (
+                db.scalar(
+                    select(func.max(AuditEvent.sequence)).where(
+                        AuditEvent.execution_id == execution_id
+                    )
+                )
+                or 0
+            ) + 1
+            for row in build_rows(base_seq):
+                db.add(row)
+            try:
+                db.commit()
+                return
+            except IntegrityError:
+                db.rollback()
+                if attempt == 4:
+                    raise

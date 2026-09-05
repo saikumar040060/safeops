@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.models import (
     Agent,
+    AgentToolPermission,
     Customer,
     Deployment,
     Payment,
@@ -19,6 +20,7 @@ from app.models.enums import (
     DeploymentEnvironment,
     LogLevel,
     PaymentStatus,
+    PermissionType,
     RiskLevel,
 )
 
@@ -113,6 +115,73 @@ SEED_SUPPORT_TICKETS = [
     },
 ]
 
+SEED_PERMISSIONS = [
+    {
+        "agent_name": "support-agent",
+        "tool_name": "read_customer",
+        "permission": PermissionType.ALLOW,
+    },
+    {
+        "agent_name": "support-agent",
+        "tool_name": "get_payments",
+        "permission": PermissionType.ALLOW,
+    },
+    {
+        "agent_name": "support-agent",
+        "tool_name": "get_support_ticket",
+        "permission": PermissionType.ALLOW,
+    },
+    {
+        "agent_name": "support-agent",
+        "tool_name": "refund_payment",
+        "permission": PermissionType.CONDITIONAL,
+    },
+    {"agent_name": "support-agent", "tool_name": "read_logs", "permission": PermissionType.DENY},
+    {
+        "agent_name": "support-agent",
+        "tool_name": "get_deployment",
+        "permission": PermissionType.DENY,
+    },
+    {
+        "agent_name": "support-agent",
+        "tool_name": "deploy_staging",
+        "permission": PermissionType.DENY,
+    },
+    {
+        "agent_name": "support-agent",
+        "tool_name": "deploy_production",
+        "permission": PermissionType.DENY,
+    },
+    {"agent_name": "devops-agent", "tool_name": "read_logs", "permission": PermissionType.ALLOW},
+    {
+        "agent_name": "devops-agent",
+        "tool_name": "get_deployment",
+        "permission": PermissionType.ALLOW,
+    },
+    {
+        "agent_name": "devops-agent",
+        "tool_name": "deploy_staging",
+        "permission": PermissionType.CONDITIONAL,
+    },
+    {
+        "agent_name": "devops-agent",
+        "tool_name": "deploy_production",
+        "permission": PermissionType.CONDITIONAL,
+    },
+    {"agent_name": "devops-agent", "tool_name": "read_customer", "permission": PermissionType.DENY},
+    {"agent_name": "devops-agent", "tool_name": "get_payments", "permission": PermissionType.DENY},
+    {
+        "agent_name": "devops-agent",
+        "tool_name": "get_support_ticket",
+        "permission": PermissionType.DENY,
+    },
+    {
+        "agent_name": "devops-agent",
+        "tool_name": "refund_payment",
+        "permission": PermissionType.DENY,
+    },
+]
+
 SEED_SERVICE_NAME = "checkout-service"
 
 SEED_DEPLOYMENTS = [
@@ -156,6 +225,24 @@ def seed(db: Session) -> None:
         existing = db.query(Tool).filter_by(name=data["name"]).one_or_none()
         if existing is None:
             db.add(Tool(**data))
+    db.flush()
+
+    agents_by_name = {a.name: a for a in db.query(Agent).all()}
+    tools_by_name = {t.name: t for t in db.query(Tool).all()}
+    for data in SEED_PERMISSIONS:
+        agent = agents_by_name[data["agent_name"]]
+        tool = tools_by_name[data["tool_name"]]
+        existing = (
+            db.query(AgentToolPermission)
+            .filter_by(agent_id=agent.id, tool_id=tool.id)
+            .one_or_none()
+        )
+        if existing is None:
+            db.add(
+                AgentToolPermission(
+                    agent_id=agent.id, tool_id=tool.id, permission=data["permission"]
+                )
+            )
 
     customer = db.query(Customer).filter_by(customer_id=SEED_CUSTOMER["customer_id"]).one_or_none()
     if customer is None:

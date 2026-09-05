@@ -22,6 +22,8 @@ EXPECTED_TABLES = {
     "services",
     "deployments",
     "service_logs",
+    "agent_tool_permissions",
+    "tool_requests",
 }
 EXPECTED_CHECKS = {
     "agents": {
@@ -41,9 +43,12 @@ EXPECTED_CHECKS = {
             "EXECUTION_STARTED",
             "AGENT_REASONED",
             "TOOL_REQUESTED",
+            "PERMISSION_CHECKED",
             "POLICY_CHECKED",
+            "POLICY_EVALUATION_REQUIRED",
             "RISK_ASSESSED",
             "ACTION_ALLOWED",
+            "ACTION_DENIED",
             "ACTION_BLOCKED",
             "APPROVAL_REQUESTED",
             "APPROVAL_GRANTED",
@@ -56,6 +61,8 @@ EXPECTED_CHECKS = {
     "payments": {"paymentstatus": {"SUCCEEDED", "REFUNDED"}},
     "deployments": {"deploymentenvironment": {"STAGING", "PRODUCTION"}},
     "service_logs": {"loglevel": {"INFO", "WARN", "ERROR"}},
+    "agent_tool_permissions": {"permissiontype": {"ALLOW", "DENY", "CONDITIONAL"}},
+    "tool_requests": {"toolrequeststatus": {"REQUESTED", "EXECUTED", "DENIED", "FAILED"}},
 }
 
 
@@ -98,7 +105,13 @@ def test_upgrade_from_empty_database(alembic_config, db_engine):
         for constraint in unique_constraints
     )
 
-    for table in ("executions", "audit_events", "approval_requests"):
+    for table in (
+        "executions",
+        "audit_events",
+        "approval_requests",
+        "agent_tool_permissions",
+        "tool_requests",
+    ):
         foreign_keys = inspector.get_foreign_keys(table)
         assert all(fk["options"].get("ondelete") is None for fk in foreign_keys)
 
