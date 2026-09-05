@@ -1,7 +1,9 @@
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
+import app.models  # noqa: F401  (registers models on Base.metadata)
 from alembic import context
 from app.core.config import get_settings
 from app.core.database import Base
@@ -15,7 +17,12 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# An explicit DATABASE_URL env var (e.g. from tests targeting an isolated
+# database) always wins over the cached app settings, since get_settings()
+# is process-wide cached and won't pick up a later env var change.
+config.set_main_option(
+    "sqlalchemy.url", os.environ.get("DATABASE_URL") or get_settings().database_url
+)
 
 target_metadata = Base.metadata
 

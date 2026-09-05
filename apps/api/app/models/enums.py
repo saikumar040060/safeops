@@ -1,19 +1,19 @@
 import enum
 
 
-class RiskLevel(str, enum.Enum):
+class RiskLevel(enum.StrEnum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
     CRITICAL = "CRITICAL"
 
 
-class AgentStatus(str, enum.Enum):
+class AgentStatus(enum.StrEnum):
     ACTIVE = "ACTIVE"
     DISABLED = "DISABLED"
 
 
-class ExecutionStatus(str, enum.Enum):
+class ExecutionStatus(enum.StrEnum):
     RUNNING = "RUNNING"
     WAITING_APPROVAL = "WAITING_APPROVAL"
     COMPLETED = "COMPLETED"
@@ -21,14 +21,14 @@ class ExecutionStatus(str, enum.Enum):
     BLOCKED = "BLOCKED"
 
 
-class ApprovalStatus(str, enum.Enum):
+class ApprovalStatus(enum.StrEnum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
     EXPIRED = "EXPIRED"
 
 
-class AuditEventType(str, enum.Enum):
+class AuditEventType(enum.StrEnum):
     EXECUTION_STARTED = "EXECUTION_STARTED"
     AGENT_REASONED = "AGENT_REASONED"
     TOOL_REQUESTED = "TOOL_REQUESTED"
