@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 import app.models  # noqa: F401  (registers models on Base.metadata)
 from app.core.config import get_settings
 from app.core.database import Base
+from app.core.seed import seed
 
 
 def _test_database_url() -> str:
@@ -54,3 +55,9 @@ def db_session(db_engine):
 
     with Session(db_engine) as session:
         yield session
+
+
+@pytest.fixture()
+def seeded_db(db_session):
+    seed(db_session)
+    return db_session

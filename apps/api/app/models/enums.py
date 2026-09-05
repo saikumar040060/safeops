@@ -28,6 +28,22 @@ class ApprovalStatus(enum.StrEnum):
     EXPIRED = "EXPIRED"
 
 
+class PaymentStatus(enum.StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    REFUNDED = "REFUNDED"
+
+
+class DeploymentEnvironment(enum.StrEnum):
+    STAGING = "STAGING"
+    PRODUCTION = "PRODUCTION"
+
+
+class LogLevel(enum.StrEnum):
+    INFO = "INFO"
+    WARN = "WARN"
+    ERROR = "ERROR"
+
+
 class AuditEventType(enum.StrEnum):
     EXECUTION_STARTED = "EXECUTION_STARTED"
     AGENT_REASONED = "AGENT_REASONED"
