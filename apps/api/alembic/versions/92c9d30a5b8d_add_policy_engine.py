@@ -108,6 +108,22 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    # Rows using Milestone 5-only enum values would violate the narrower
+    # Milestone 4 CHECK constraints. Policy audit rows have no faithful older
+    # representation, while a request waiting on an unavailable approval
+    # workflow is safest represented as denied.
+    op.execute(
+        "DELETE FROM audit_events WHERE event_type IN ("
+        "'POLICY_EVALUATION_STARTED', 'POLICY_MATCHED', 'POLICY_ALLOWED', "
+        "'POLICY_APPROVAL_REQUIRED', 'POLICY_BLOCKED')"
+    )
+    op.execute(
+        "UPDATE tool_requests SET status = 'DENIED', completed_at = COALESCE(completed_at, now()), "
+        "error = COALESCE(error, '{\"code\": \"POLICY_DOWNGRADE\", "
+        "\"message\": \"Policy approval unavailable after downgrade\"}'::jsonb) "
+        "WHERE status = 'REQUIRES_APPROVAL'"
+    )
+
     op.drop_constraint('auditeventtype', 'audit_events', type_='check')
     op.create_check_constraint(
         'auditeventtype',

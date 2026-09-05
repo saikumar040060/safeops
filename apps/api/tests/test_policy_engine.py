@@ -1,5 +1,6 @@
 from app.models import Agent, Execution, Policy, Tool
 from app.models.enums import ExecutionStatus, PolicyAction
+from app.services.policy_conditions import PolicyConditionError, evaluate_conditions
 from app.services.policy_engine import policy_engine
 
 
@@ -277,6 +278,44 @@ def test_malformed_condition_missing_keys_fails_closed(seeded_db):
 
     assert result.decision == PolicyAction.BLOCK
     assert "POLICY_EVALUATION_ERROR" in result.reason
+
+
+def test_falsy_non_object_condition_is_not_unconditional():
+    for malformed in ([], "", False, 0):
+        try:
+            evaluate_conditions(malformed, {})  # type: ignore[arg-type]
+        except PolicyConditionError:
+            pass
+        else:
+            raise AssertionError(f"malformed condition authorized: {malformed!r}")
+
+
+def test_empty_combinator_is_not_unconditional():
+    try:
+        evaluate_conditions({"all": []}, {})
+    except PolicyConditionError:
+        pass
+    else:
+        raise AssertionError("empty 'all' condition authorized")
+
+
+def test_null_field_and_bool_number_equality_cannot_authorize():
+    null_condition = {"field": "arguments.amount", "operator": "eq", "value": None}
+    try:
+        evaluate_conditions(null_condition, {"arguments": {"amount": None}})
+    except PolicyConditionError:
+        pass
+    else:
+        raise AssertionError("null field authorized")
+
+    bool_condition = {"field": "arguments.amount", "operator": "eq", "value": 1}
+    assert evaluate_conditions(bool_condition, {"arguments": {"amount": True}}) is False
+
+
+def test_decimal_comparisons_are_exact_at_sub_cent_boundary():
+    condition = {"field": "arguments.amount", "operator": "lte", "value": 100}
+    assert evaluate_conditions(condition, {"arguments": {"amount": "100.00"}}) is True
+    assert evaluate_conditions(condition, {"arguments": {"amount": "100.001"}}) is False
 
 
 def test_unsupported_operator_fails_closed(seeded_db):

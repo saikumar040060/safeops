@@ -6,13 +6,14 @@ from app.models import (
     AuditEvent,
     Deployment,
     Payment,
+    Policy,
     PolicyDecision,
     Refund,
     Service,
     Tool,
     ToolRequest,
 )
-from app.models.enums import ExecutionStatus, PermissionType
+from app.models.enums import ExecutionStatus, PermissionType, PolicyAction
 from app.services.tool_gateway import ToolGateway
 
 gateway = ToolGateway()
@@ -441,6 +442,83 @@ def test_conditional_with_no_matching_policy_fails_closed(seeded_db):
 
     event_types = [e.event_type.value for e in _events(seeded_db, execution.id)]
     assert event_types == [
+        "TOOL_REQUESTED",
+        "PERMISSION_CHECKED",
+        "POLICY_EVALUATION_STARTED",
+        "POLICY_BLOCKED",
+    ]
+
+
+def test_malformed_policy_reason_does_not_leak_condition_data(seeded_db):
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent)
+    tool = seeded_db.query(Tool).filter_by(name="refund_payment").one()
+    secret = "do-not-persist-this-policy-secret"
+    seeded_db.add(
+        Policy(
+            policy_key="TEST_MALFORMED_SECRET",
+            name="malformed",
+            agent_type="support",
+            tool_id=tool.id,
+            priority=999,
+            enabled=True,
+            action=PolicyAction.ALLOW,
+            conditions={"all": [{"field": secret}]},
+        )
+    )
+    seeded_db.commit()
+
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="refund_payment",
+        arguments={
+            "payment_id": "PAY-9003",
+            "amount": "50.00",
+            "reason": "goodwill",
+            "idempotency_key": "gw-malformed-secret",
+        },
+        db=seeded_db,
+    )
+
+    request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
+    decision = seeded_db.query(PolicyDecision).filter_by(execution_id=execution.id).one()
+    assert result.status == "BLOCKED"
+    assert secret not in (result.reason or "")
+    assert secret not in request.error["message"]
+    assert secret not in decision.reason
+
+
+def test_unexpected_policy_exception_fails_closed_without_leaking(
+    seeded_db, monkeypatch
+):
+    agent = _agent(seeded_db, "devops-agent")
+    execution = _make_execution(seeded_db, agent)
+    secret = "sensitive evaluator internals"
+
+    def explode(**_kwargs):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr("app.services.tool_gateway.policy_engine.evaluate", explode)
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="deploy_staging",
+        arguments={"service_name": "checkout-service", "version": "never-deployed"},
+        db=seeded_db,
+    )
+
+    request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
+    decision = seeded_db.query(PolicyDecision).filter_by(execution_id=execution.id).one()
+    assert result.status == "BLOCKED"
+    assert result.matched_policy is None
+    assert request.status.value == "DENIED"
+    assert decision.decision.value == "BLOCK"
+    assert decision.matched_policy_id is None
+    assert secret not in (result.reason or "")
+    assert secret not in request.error["message"]
+    assert secret not in decision.reason
+    assert [e.event_type.value for e in _events(seeded_db, execution.id)] == [
         "TOOL_REQUESTED",
         "PERMISSION_CHECKED",
         "POLICY_EVALUATION_STARTED",

@@ -307,9 +307,25 @@ class ToolGateway:
         # `policies` table: a concurrent policy edit between this read and
         # our commit below can race, same accepted TOCTOU class as the
         # Milestone 4 permission/execution check.
-        policy_result = policy_engine.evaluate(
-            agent=agent, tool=tool_row, arguments=arguments, execution=execution, db=db
-        )
+        try:
+            policy_result = policy_engine.evaluate(
+                agent=agent, tool=tool_row, arguments=arguments, execution=execution, db=db
+            )
+        except Exception:
+            # Policy evaluation is an authorization boundary. Unexpected
+            # evaluator/DB failures must become a generic, persisted BLOCK;
+            # never expose exception text and never attempt tool execution.
+            db.rollback()
+            policy_result = PolicyEvaluationResult(
+                decision=PolicyAction.BLOCK,
+                reason="POLICY_EVALUATION_ERROR: policy evaluation failed",
+                context={
+                    "arguments": arguments,
+                    "agent": {"id": str(agent.id), "type": agent.type, "name": agent.name},
+                    "tool": {"id": str(tool_row.id), "name": tool_row.name},
+                    "execution": {"id": str(execution.id)},
+                },
+            )
 
         policy_id = str(policy_result.policy_id) if policy_result.policy_id else None
 

@@ -23,21 +23,37 @@ def _resolve_field(field: str, context: dict[str, Any]) -> Any:
         if not isinstance(value, dict) or part not in value:
             raise PolicyConditionError(f"Missing field '{field}' in evaluation context")
         value = value[part]
+    if value is None:
+        raise PolicyConditionError(f"Null field '{field}' in evaluation context")
     return value
 
 
 def _as_decimal(value: Any) -> Decimal:
+    if isinstance(value, bool):
+        raise PolicyConditionError("Booleans are not numeric policy values")
     try:
-        return Decimal(str(value))
+        converted = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError) as exc:
         raise PolicyConditionError(f"Cannot compare non-numeric value: {value!r}") from exc
+    if not converted.is_finite():
+        raise PolicyConditionError("Non-finite numeric policy value")
+    return converted
 
 
 def _eq(actual: Any, expected: Any) -> bool:
     try:
-        return _as_decimal(actual) == _as_decimal(expected)
+        actual_number = _as_decimal(actual)
     except PolicyConditionError:
-        return actual == expected
+        try:
+            _as_decimal(expected)
+        except PolicyConditionError:
+            return type(actual) is type(expected) and actual == expected
+        return False
+    try:
+        expected_number = _as_decimal(expected)
+    except PolicyConditionError:
+        return False
+    return actual_number == expected_number
 
 
 def _neq(actual: Any, expected: Any) -> bool:
@@ -62,7 +78,7 @@ OPERATORS = {
 
 
 def evaluate_conditions(conditions: dict[str, Any] | None, context: dict[str, Any]) -> bool:
-    if not conditions:
+    if conditions is None or conditions == {}:
         return True
     return _evaluate_node(conditions, context)
 
@@ -71,16 +87,20 @@ def _evaluate_node(node: Any, context: dict[str, Any]) -> bool:
     if not isinstance(node, dict):
         raise PolicyConditionError(f"Malformed policy condition node: {node!r}")
 
+    combinators = {key for key in ("all", "any") if key in node}
+    if combinators:
+        if len(combinators) != 1 or len(node) != 1:
+            raise PolicyConditionError("Condition combinators cannot be mixed with other keys")
     if "all" in node:
         clauses = node["all"]
-        if not isinstance(clauses, list):
-            raise PolicyConditionError("'all' must be a list of conditions")
+        if not isinstance(clauses, list) or not clauses:
+            raise PolicyConditionError("'all' must be a non-empty list of conditions")
         return all(_evaluate_node(clause, context) for clause in clauses)
 
     if "any" in node:
         clauses = node["any"]
-        if not isinstance(clauses, list):
-            raise PolicyConditionError("'any' must be a list of conditions")
+        if not isinstance(clauses, list) or not clauses:
+            raise PolicyConditionError("'any' must be a non-empty list of conditions")
         return any(_evaluate_node(clause, context) for clause in clauses)
 
     return _evaluate_leaf(node, context)
@@ -90,6 +110,8 @@ def _evaluate_leaf(leaf: dict[str, Any], context: dict[str, Any]) -> bool:
     missing = {"field", "operator", "value"} - leaf.keys()
     if missing:
         raise PolicyConditionError(f"Malformed policy condition, missing keys: {sorted(missing)}")
+    if set(leaf) != {"field", "operator", "value"}:
+        raise PolicyConditionError("Malformed policy condition, unexpected keys")
 
     operator = leaf["operator"]
     op_fn = OPERATORS.get(operator)

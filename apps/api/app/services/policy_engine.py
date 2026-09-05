@@ -93,10 +93,10 @@ class PolicyEngine:
             try:
                 if evaluate_conditions(policy.conditions, context):
                     matched.append(policy)
-            except PolicyConditionError as exc:
+            except PolicyConditionError:
                 return PolicyEvaluationResult(
                     decision=PolicyAction.BLOCK,
-                    reason=f"POLICY_EVALUATION_ERROR: {exc}",
+                    reason="POLICY_EVALUATION_ERROR: invalid policy condition",
                     context=context,
                 )
 
