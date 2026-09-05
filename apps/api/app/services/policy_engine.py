@@ -7,15 +7,20 @@ arbitrary code execution ever participates in the decision. The engine
 never persists anything -- PolicyDecision persistence is the Tool
 Gateway's responsibility, so evaluation stays side-effect free.
 
-Precedence (most specific wins, no fallthrough to lower ranks):
+Precedence (most specific wins):
     1. policies pinned to this exact agent_id
     2. policies scoped to this agent's agent_type
     3. tool-only policies (no agent_id, no agent_type)
-Whichever rank has at least one enabled policy for this tool is the only
-rank considered. Within that rank, only policies whose conditions
-evaluate true are candidates; the highest `priority` wins. A tie among
-top-priority candidates with different actions fails closed as
-POLICY_CONFLICT. No candidate at all fails closed as NO_MATCHING_POLICY.
+Ranks are tried in that order. A rank is only decisive once at least one
+of its enabled policies' conditions actually matches this call; if a
+rank has enabled policies but none of them match, evaluation falls
+through to the next rank (a narrow agent-specific override that doesn't
+apply to this call shouldn't hide a broader policy that does). Within a
+decisive rank, only policies whose conditions evaluate true are
+candidates; the highest `priority` wins. A tie among top-priority
+candidates with different actions fails closed as POLICY_CONFLICT
+without falling through -- that rank did apply, just ambiguously. No
+rank ever matches: fails closed as NO_MATCHING_POLICY.
 """
 
 import uuid
@@ -66,8 +71,11 @@ class PolicyEngine:
         rank3 = [p for p in candidates if p.agent_id is None and p.agent_type is None]
 
         for rank in (rank1, rank2, rank3):
-            if rank:
-                return self._resolve_rank(rank, context)
+            if not rank:
+                continue
+            result = self._resolve_rank(rank, context)
+            if result is not None:
+                return result
 
         return PolicyEvaluationResult(
             decision=PolicyAction.BLOCK,
@@ -78,7 +86,8 @@ class PolicyEngine:
     @staticmethod
     def _resolve_rank(
         policies: list[Policy], context: dict[str, Any]
-    ) -> PolicyEvaluationResult:
+    ) -> PolicyEvaluationResult | None:
+        """Resolve one precedence rank, or return None to fall through to the next."""
         matched: list[Policy] = []
         for policy in policies:
             try:
@@ -92,11 +101,7 @@ class PolicyEngine:
                 )
 
         if not matched:
-            return PolicyEvaluationResult(
-                decision=PolicyAction.BLOCK,
-                reason="NO_MATCHING_POLICY: no enabled policy condition matched",
-                context=context,
-            )
+            return None  # nothing in this rank applies: try the next, broader rank
 
         top_priority = max(p.priority for p in matched)
         top = [p for p in matched if p.priority == top_priority]

@@ -116,14 +116,14 @@ def test_exact_agent_policy_beats_agent_type_policy(seeded_db):
     assert result.matched_policy == "TEST_EXACT_AGENT_ALLOW"
 
 
-def test_exact_agent_policy_rank_has_no_fallthrough(seeded_db):
+def test_non_matching_exact_agent_policy_falls_through_to_agent_type(seeded_db):
     agent = _agent(seeded_db, "devops-agent")
     tool = _tool(seeded_db, "deploy_production")
 
     # An exact-agent policy exists for this tool, but its conditions never
-    # match this request. The agent_type policy underneath must NOT be
-    # consulted as a fallback -- the rank with any exact-agent policy wins
-    # outright.
+    # match this request. A narrow, non-applicable override must not hide
+    # the broader agent_type policy that does apply -- evaluation falls
+    # through to the agent_type rank (seeded: REQUIRE_APPROVAL).
     seeded_db.add(
         Policy(
             policy_key="TEST_EXACT_AGENT_NEVER_MATCHES",
@@ -137,6 +137,39 @@ def test_exact_agent_policy_rank_has_no_fallthrough(seeded_db):
                 "all": [{"field": "arguments.version", "operator": "eq", "value": "never"}]
             },
         )
+    )
+    seeded_db.commit()
+
+    result = _evaluate(
+        seeded_db, agent, tool, {"service_name": "checkout-service", "version": "1"}
+    )
+
+    assert result.decision == PolicyAction.REQUIRE_APPROVAL
+    assert result.matched_policy == "DEVOPS_PRODUCTION_DEPLOY"
+
+
+def test_no_rank_matches_falls_closed(seeded_db):
+    agent = _agent(seeded_db, "devops-agent")
+    tool = _tool(seeded_db, "deploy_production")
+
+    # Same non-matching exact-agent override, but this time disable the
+    # agent_type seed policy too so no rank ever matches.
+    seeded_db.add(
+        Policy(
+            policy_key="TEST_EXACT_AGENT_NEVER_MATCHES_2",
+            name="exact agent, impossible condition",
+            agent_id=agent.id,
+            tool_id=tool.id,
+            priority=100,
+            enabled=True,
+            action=PolicyAction.ALLOW,
+            conditions={
+                "all": [{"field": "arguments.version", "operator": "eq", "value": "never"}]
+            },
+        )
+    )
+    seeded_db.query(Policy).filter_by(policy_key="DEVOPS_PRODUCTION_DEPLOY").update(
+        {"enabled": False}
     )
     seeded_db.commit()
 
