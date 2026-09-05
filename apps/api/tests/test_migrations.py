@@ -10,6 +10,37 @@ from app.core.database import Base
 
 API_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TABLES = {"agents", "tools", "executions", "audit_events", "approval_requests"}
+EXPECTED_CHECKS = {
+    "agents": {
+        "agentstatus": {"ACTIVE", "DISABLED"},
+        "risklevel": {"LOW", "MEDIUM", "HIGH", "CRITICAL"},
+    },
+    "tools": {"risklevel": {"LOW", "MEDIUM", "HIGH", "CRITICAL"}},
+    "executions": {
+        "executionstatus": {"RUNNING", "WAITING_APPROVAL", "COMPLETED", "FAILED", "BLOCKED"}
+    },
+    "approval_requests": {
+        "approvalstatus": {"PENDING", "APPROVED", "REJECTED", "EXPIRED"},
+        "risklevel": {"LOW", "MEDIUM", "HIGH", "CRITICAL"},
+    },
+    "audit_events": {
+        "auditeventtype": {
+            "EXECUTION_STARTED",
+            "AGENT_REASONED",
+            "TOOL_REQUESTED",
+            "POLICY_CHECKED",
+            "RISK_ASSESSED",
+            "ACTION_ALLOWED",
+            "ACTION_BLOCKED",
+            "APPROVAL_REQUESTED",
+            "APPROVAL_GRANTED",
+            "TOOL_EXECUTED",
+            "TOOL_FAILED",
+            "SECURITY_INCIDENT",
+            "EXECUTION_COMPLETED",
+        }
+    },
+}
 
 
 @pytest.fixture()
@@ -20,19 +51,45 @@ def alembic_config(db_engine, monkeypatch):
     return cfg
 
 
-def test_upgrade_from_empty_database(alembic_config, db_engine):
+def _reset_to_empty(alembic_config, db_engine) -> None:
     Base.metadata.drop_all(db_engine)
     with db_engine.connect() as conn:
         conn.execute(sa.text("DROP TABLE IF EXISTS alembic_version"))
         conn.commit()
 
+
+def test_upgrade_from_empty_database(alembic_config, db_engine):
+    _reset_to_empty(alembic_config, db_engine)
     command.upgrade(alembic_config, "head")
 
     tables = set(inspect(db_engine).get_table_names())
     assert EXPECTED_TABLES.issubset(tables)
 
+    inspector = inspect(db_engine)
+    for table, expected_checks in EXPECTED_CHECKS.items():
+        checks = {
+            check["name"]: check["sqltext"]
+            for check in inspector.get_check_constraints(table)
+        }
+        assert checks.keys() == expected_checks.keys()
+        for name, values in expected_checks.items():
+            assert all(f"'{value}'" in checks[name] for value in values)
+
+    unique_constraints = inspector.get_unique_constraints("audit_events")
+    assert any(
+        constraint["name"] == "uq_audit_events_execution_sequence"
+        and constraint["column_names"] == ["execution_id", "sequence"]
+        for constraint in unique_constraints
+    )
+
+    for table in ("executions", "audit_events", "approval_requests"):
+        foreign_keys = inspector.get_foreign_keys(table)
+        assert all(fk["options"].get("ondelete") is None for fk in foreign_keys)
+
 
 def test_downgrade_to_base_then_restore(alembic_config, db_engine):
+    _reset_to_empty(alembic_config, db_engine)
+    command.upgrade(alembic_config, "head")
     command.downgrade(alembic_config, "base")
     tables = set(inspect(db_engine).get_table_names())
     assert not (EXPECTED_TABLES & tables)

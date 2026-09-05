@@ -37,13 +37,9 @@ def _ensure_database_exists(url: str) -> None:
 @pytest.fixture(scope="session")
 def db_engine():
     url = _test_database_url()
-    try:
-        _ensure_database_exists(url)
-        engine = create_engine(url)
-        Base.metadata.create_all(engine)
-    except Exception as exc:
-        pytest.skip(f"Postgres not reachable at {url!r} for tests: {exc}")
-        return
+    _ensure_database_exists(url)
+    engine = create_engine(url)
+    Base.metadata.create_all(engine)
 
     yield engine
     engine.dispose()
