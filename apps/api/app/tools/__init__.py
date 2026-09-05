@@ -1,4 +1,5 @@
 from app.tools.customer import GetPaymentsTool, GetSupportTicketTool, ReadCustomerTool
+from app.tools.data_export import ExportCustomerDataTool, SendExternalEmailTool
 from app.tools.devops import (
     DeployProductionTool,
     DeployStagingTool,
@@ -18,6 +19,8 @@ for tool_cls in (
     GetDeploymentTool,
     DeployStagingTool,
     DeployProductionTool,
+    ExportCustomerDataTool,
+    SendExternalEmailTool,
 ):
     tool_registry.register(tool_cls())
 

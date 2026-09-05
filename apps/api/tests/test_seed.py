@@ -91,5 +91,5 @@ def test_seed_permissions_match_expected_matrix(db_session):
         for row in SEED_PERMISSIONS
     }
 
-    assert len(SEED_PERMISSIONS) == 16
+    assert len(SEED_PERMISSIONS) == 20
     assert actual == expected

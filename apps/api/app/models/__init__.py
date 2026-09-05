@@ -9,6 +9,8 @@ from app.models.payment import Payment
 from app.models.policy import Policy
 from app.models.policy_decision import PolicyDecision
 from app.models.refund import Refund
+from app.models.risk_assessment import RiskAssessment
+from app.models.security_incident import SecurityIncident
 from app.models.service import Service
 from app.models.service_log import ServiceLog
 from app.models.support_ticket import SupportTicket
@@ -27,6 +29,8 @@ __all__ = [
     "Policy",
     "PolicyDecision",
     "Refund",
+    "RiskAssessment",
+    "SecurityIncident",
     "Service",
     "ServiceLog",
     "SupportTicket",

@@ -115,6 +115,10 @@ def test_refund_50_allowed_and_executed(seeded_db):
         "POLICY_EVALUATION_STARTED",
         "POLICY_MATCHED",
         "POLICY_ALLOWED",
+        "RISK_ASSESSMENT_STARTED",
+        "RISK_SIGNAL_DETECTED",
+        "RISK_ASSESSED",
+        "ACTION_ALLOWED",
         "TOOL_EXECUTED",
     ]
 
@@ -183,6 +187,9 @@ def test_refund_100_01_requires_approval_and_does_not_execute(seeded_db):
         "POLICY_EVALUATION_STARTED",
         "POLICY_MATCHED",
         "POLICY_APPROVAL_REQUIRED",
+        "RISK_ASSESSMENT_STARTED",
+        "RISK_SIGNAL_DETECTED",
+        "RISK_ASSESSED",
         "APPROVAL_REQUESTED",
     ]
 
@@ -363,6 +370,9 @@ def test_devops_agent_deploy_staging_conditional_allowed_and_executed(seeded_db)
         "POLICY_EVALUATION_STARTED",
         "POLICY_MATCHED",
         "POLICY_ALLOWED",
+        "RISK_ASSESSMENT_STARTED",
+        "RISK_ASSESSED",
+        "ACTION_ALLOWED",
         "TOOL_EXECUTED",
     ]
 
@@ -403,6 +413,8 @@ def test_devops_agent_deploy_production_requires_approval_and_does_not_execute(s
         "POLICY_EVALUATION_STARTED",
         "POLICY_MATCHED",
         "POLICY_APPROVAL_REQUIRED",
+        "RISK_ASSESSMENT_STARTED",
+        "RISK_ASSESSED",
         "APPROVAL_REQUESTED",
     ]
 
@@ -646,6 +658,8 @@ def test_unexpected_tool_exception_is_persisted_as_failure(seeded_db, monkeypatc
     assert [event.event_type.value for event in _events(seeded_db, execution.id)] == [
         "TOOL_REQUESTED",
         "PERMISSION_CHECKED",
+        "RISK_ASSESSMENT_STARTED",
+        "RISK_ASSESSED",
         "ACTION_ALLOWED",
         "TOOL_FAILED",
     ]
@@ -775,6 +789,8 @@ def test_audit_events_emitted_in_correct_order_on_success(seeded_db):
     assert [e.event_type.value for e in events] == [
         "TOOL_REQUESTED",
         "PERMISSION_CHECKED",
+        "RISK_ASSESSMENT_STARTED",
+        "RISK_ASSESSED",
         "ACTION_ALLOWED",
         "TOOL_EXECUTED",
     ]
@@ -802,4 +818,4 @@ def test_multiple_calls_on_same_execution_get_sequential_audit_numbers(seeded_db
 
     events = _events(seeded_db, execution.id)
     assert [e.sequence for e in events] == list(range(1, len(events) + 1))
-    assert len(events) == 8  # 4 events per successful call
+    assert len(events) == 12  # 6 events per successful direct-ALLOW call

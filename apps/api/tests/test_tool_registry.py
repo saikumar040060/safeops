@@ -11,6 +11,8 @@ EXPECTED_TOOL_NAMES = {
     "get_deployment",
     "deploy_staging",
     "deploy_production",
+    "export_customer_data",
+    "send_external_email",
 }
 
 
