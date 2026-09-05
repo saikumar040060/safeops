@@ -22,7 +22,7 @@ class ToolRequest(Base):
     tool_name: Mapped[str] = mapped_column(String(255), index=True)
     arguments: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     status: Mapped[ToolRequestStatus] = mapped_column(
-        Enum(ToolRequestStatus, native_enum=False, length=16, create_constraint=True), index=True
+        Enum(ToolRequestStatus, native_enum=False, length=20, create_constraint=True), index=True
     )
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

@@ -1,7 +1,18 @@
 import uuid
 
-from app.models import Agent, AuditEvent, Deployment, Payment, Service, ToolRequest
-from app.models.enums import ExecutionStatus
+from app.models import (
+    Agent,
+    AgentToolPermission,
+    AuditEvent,
+    Deployment,
+    Payment,
+    PolicyDecision,
+    Refund,
+    Service,
+    Tool,
+    ToolRequest,
+)
+from app.models.enums import ExecutionStatus, PermissionType
 from app.services.tool_gateway import ToolGateway
 
 gateway = ToolGateway()
@@ -63,7 +74,118 @@ def test_support_agent_read_logs_denied(seeded_db):
     assert result.decision == "DENY"
 
 
-def test_support_agent_refund_payment_needs_policy_evaluation(seeded_db):
+def test_refund_50_allowed_and_executed(seeded_db):
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent)
+
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="refund_payment",
+        arguments={
+            "payment_id": "PAY-9002",
+            "amount": "50.00",
+            "reason": "goodwill",
+            "idempotency_key": "gw-allow-50",
+        },
+        db=seeded_db,
+    )
+
+    assert result.status == "EXECUTED"
+    assert result.decision == "ALLOW"
+    assert result.matched_policy == "SUPPORT_REFUND_AUTONOMOUS"
+
+    payment = seeded_db.query(Payment).filter_by(payment_id="PAY-9002").one()
+    assert payment.status.value == "REFUNDED"
+    assert seeded_db.query(Refund).filter_by(payment_id=payment.id).count() == 1
+
+    request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
+    assert request.status.value == "EXECUTED"
+
+    decision = seeded_db.query(PolicyDecision).filter_by(execution_id=execution.id).one()
+    assert decision.decision.value == "ALLOW"
+    assert decision.matched_policy_key == "SUPPORT_REFUND_AUTONOMOUS"
+    assert decision.tool_request_id == request.id
+
+    event_types = [e.event_type.value for e in _events(seeded_db, execution.id)]
+    assert event_types == [
+        "TOOL_REQUESTED",
+        "PERMISSION_CHECKED",
+        "POLICY_EVALUATION_STARTED",
+        "POLICY_MATCHED",
+        "POLICY_ALLOWED",
+        "TOOL_EXECUTED",
+    ]
+
+
+def test_refund_100_boundary_allowed(seeded_db):
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent)
+
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="refund_payment",
+        arguments={
+            "payment_id": "PAY-9003",
+            "amount": "100.00",
+            "reason": "goodwill",
+            "idempotency_key": "gw-allow-100",
+        },
+        db=seeded_db,
+    )
+
+    assert result.status == "EXECUTED"
+    assert result.decision == "ALLOW"
+    assert result.matched_policy == "SUPPORT_REFUND_AUTONOMOUS"
+
+    payment = seeded_db.query(Payment).filter_by(payment_id="PAY-9003").one()
+    assert payment.status.value == "REFUNDED"
+
+
+def test_refund_100_01_requires_approval_and_does_not_execute(seeded_db):
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent)
+
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="refund_payment",
+        arguments={
+            "payment_id": "PAY-9003",
+            "amount": "100.01",
+            "reason": "duplicate",
+            "idempotency_key": "gw-approval-100.01",
+        },
+        db=seeded_db,
+    )
+
+    assert result.status == "REQUIRES_APPROVAL"
+    assert result.decision == "REQUIRE_APPROVAL"
+    assert result.matched_policy == "SUPPORT_REFUND_APPROVAL"
+
+    payment = seeded_db.query(Payment).filter_by(payment_id="PAY-9003").one()
+    assert payment.status.value == "SUCCEEDED"  # untouched: tool never ran
+    assert seeded_db.query(Refund).count() == 0
+
+    request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
+    assert request.status.value == "REQUIRES_APPROVAL"
+
+    decision = seeded_db.query(PolicyDecision).filter_by(execution_id=execution.id).one()
+    assert decision.decision.value == "REQUIRE_APPROVAL"
+    assert decision.matched_policy_key == "SUPPORT_REFUND_APPROVAL"
+
+    event_types = [e.event_type.value for e in _events(seeded_db, execution.id)]
+    assert event_types == [
+        "TOOL_REQUESTED",
+        "PERMISSION_CHECKED",
+        "POLICY_EVALUATION_STARTED",
+        "POLICY_MATCHED",
+        "POLICY_APPROVAL_REQUIRED",
+    ]
+
+
+def test_refund_750_requires_approval_and_does_not_execute(seeded_db):
     agent = _agent(seeded_db, "support-agent")
     execution = _make_execution(seeded_db, agent)
 
@@ -75,16 +197,106 @@ def test_support_agent_refund_payment_needs_policy_evaluation(seeded_db):
             "payment_id": "PAY-9003",
             "amount": "750.00",
             "reason": "duplicate",
-            "idempotency_key": "gw-conditional-1",
+            "idempotency_key": "gw-approval-750",
         },
         db=seeded_db,
     )
 
-    assert result.status == "NEEDS_POLICY_EVALUATION"
-    assert result.decision == "CONDITIONAL"
+    assert result.status == "REQUIRES_APPROVAL"
+    assert result.decision == "REQUIRE_APPROVAL"
 
     payment = seeded_db.query(Payment).filter_by(payment_id="PAY-9003").one()
     assert payment.status.value == "SUCCEEDED"  # untouched: tool never ran
+    assert seeded_db.query(Refund).count() == 0
+
+
+def test_refund_1000_boundary_requires_approval(seeded_db):
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent)
+
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="refund_payment",
+        arguments={
+            "payment_id": "PAY-9003",
+            "amount": "1000.00",
+            "reason": "duplicate",
+            "idempotency_key": "gw-approval-1000",
+        },
+        db=seeded_db,
+    )
+
+    assert result.status == "REQUIRES_APPROVAL"
+    assert result.decision == "REQUIRE_APPROVAL"
+    assert result.matched_policy == "SUPPORT_REFUND_APPROVAL"
+
+
+def test_refund_1000_01_blocked_and_does_not_execute(seeded_db):
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent)
+
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="refund_payment",
+        arguments={
+            "payment_id": "PAY-9003",
+            "amount": "1000.01",
+            "reason": "duplicate",
+            "idempotency_key": "gw-block-1000.01",
+        },
+        db=seeded_db,
+    )
+
+    assert result.status == "BLOCKED"
+    assert result.decision == "BLOCK"
+    assert result.matched_policy == "SUPPORT_REFUND_BLOCK"
+
+    payment = seeded_db.query(Payment).filter_by(payment_id="PAY-9003").one()
+    assert payment.status.value == "SUCCEEDED"
+    assert seeded_db.query(Refund).count() == 0
+
+    request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
+    assert request.status.value == "DENIED"
+
+    decision = seeded_db.query(PolicyDecision).filter_by(execution_id=execution.id).one()
+    assert decision.decision.value == "BLOCK"
+    assert decision.matched_policy_key == "SUPPORT_REFUND_BLOCK"
+
+    event_types = [e.event_type.value for e in _events(seeded_db, execution.id)]
+    assert event_types == [
+        "TOOL_REQUESTED",
+        "PERMISSION_CHECKED",
+        "POLICY_EVALUATION_STARTED",
+        "POLICY_MATCHED",
+        "POLICY_BLOCKED",
+    ]
+
+
+def test_refund_10000_blocked_and_does_not_execute(seeded_db):
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent)
+
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="refund_payment",
+        arguments={
+            "payment_id": "PAY-9003",
+            "amount": "10000.00",
+            "reason": "duplicate",
+            "idempotency_key": "gw-block-10000",
+        },
+        db=seeded_db,
+    )
+
+    assert result.status == "BLOCKED"
+    assert result.decision == "BLOCK"
+
+    payment = seeded_db.query(Payment).filter_by(payment_id="PAY-9003").one()
+    assert payment.status.value == "SUCCEEDED"
+    assert seeded_db.query(Refund).count() == 0
 
 
 def test_devops_agent_read_logs_allowed(seeded_db):
@@ -119,7 +331,41 @@ def test_devops_agent_customer_tool_denied(seeded_db):
     assert result.decision == "DENY"
 
 
-def test_devops_agent_deploy_production_needs_policy_evaluation(seeded_db):
+def test_devops_agent_deploy_staging_conditional_allowed_and_executed(seeded_db):
+    agent = _agent(seeded_db, "devops-agent")
+    execution = _make_execution(seeded_db, agent)
+    service = seeded_db.query(Service).filter_by(name="checkout-service").one()
+
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="deploy_staging",
+        arguments={"service_name": "checkout-service", "version": "9.9.9-staging"},
+        db=seeded_db,
+    )
+
+    assert result.status == "EXECUTED"
+    assert result.decision == "ALLOW"
+    assert result.matched_policy == "DEVOPS_STAGING_DEPLOY"
+
+    versions = {d.version for d in seeded_db.query(Deployment).filter_by(service_id=service.id)}
+    assert "9.9.9-staging" in versions
+
+    request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
+    assert request.status.value == "EXECUTED"
+
+    event_types = [e.event_type.value for e in _events(seeded_db, execution.id)]
+    assert event_types == [
+        "TOOL_REQUESTED",
+        "PERMISSION_CHECKED",
+        "POLICY_EVALUATION_STARTED",
+        "POLICY_MATCHED",
+        "POLICY_ALLOWED",
+        "TOOL_EXECUTED",
+    ]
+
+
+def test_devops_agent_deploy_production_requires_approval_and_does_not_execute(seeded_db):
     agent = _agent(seeded_db, "devops-agent")
     execution = _make_execution(seeded_db, agent)
     service = seeded_db.query(Service).filter_by(name="checkout-service").one()
@@ -132,16 +378,74 @@ def test_devops_agent_deploy_production_needs_policy_evaluation(seeded_db):
         db=seeded_db,
     )
 
-    assert result.status == "NEEDS_POLICY_EVALUATION"
-    assert result.decision == "CONDITIONAL"
+    assert result.status == "REQUIRES_APPROVAL"
+    assert result.decision == "REQUIRE_APPROVAL"
+    assert result.matched_policy == "DEVOPS_PRODUCTION_DEPLOY"
 
     versions = {
         d.version for d in seeded_db.query(Deployment).filter_by(service_id=service.id)
     }
     assert "9.9.9-conditional" not in versions
 
+    request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
+    assert request.status.value == "REQUIRES_APPROVAL"
+
+    decision = seeded_db.query(PolicyDecision).filter_by(execution_id=execution.id).one()
+    assert decision.decision.value == "REQUIRE_APPROVAL"
+    assert decision.matched_policy_key == "DEVOPS_PRODUCTION_DEPLOY"
+
     event_types = [e.event_type.value for e in _events(seeded_db, execution.id)]
-    assert event_types == ["TOOL_REQUESTED", "PERMISSION_CHECKED", "POLICY_EVALUATION_REQUIRED"]
+    assert event_types == [
+        "TOOL_REQUESTED",
+        "PERMISSION_CHECKED",
+        "POLICY_EVALUATION_STARTED",
+        "POLICY_MATCHED",
+        "POLICY_APPROVAL_REQUIRED",
+    ]
+
+
+def test_conditional_with_no_matching_policy_fails_closed(seeded_db):
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent)
+
+    # get_payments is normally ALLOW; flip it to CONDITIONAL with no policy
+    # configured for this agent/tool to exercise the fail-closed path.
+    tool = seeded_db.query(Tool).filter_by(name="get_payments").one()
+    permission = (
+        seeded_db.query(AgentToolPermission)
+        .filter_by(agent_id=agent.id, tool_id=tool.id)
+        .one()
+    )
+    permission.permission = PermissionType.CONDITIONAL
+    seeded_db.commit()
+
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="get_payments",
+        arguments={"customer_id": "CUST-1001"},
+        db=seeded_db,
+    )
+
+    assert result.status == "BLOCKED"
+    assert result.decision == "BLOCK"
+    assert result.matched_policy is None
+    assert "NO_MATCHING_POLICY" in result.reason
+
+    request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
+    assert request.status.value == "DENIED"
+
+    decision = seeded_db.query(PolicyDecision).filter_by(execution_id=execution.id).one()
+    assert decision.decision.value == "BLOCK"
+    assert decision.matched_policy_key is None
+
+    event_types = [e.event_type.value for e in _events(seeded_db, execution.id)]
+    assert event_types == [
+        "TOOL_REQUESTED",
+        "PERMISSION_CHECKED",
+        "POLICY_EVALUATION_STARTED",
+        "POLICY_BLOCKED",
+    ]
 
 
 def test_no_tool_execution_when_denied(seeded_db):

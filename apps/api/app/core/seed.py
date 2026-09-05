@@ -10,6 +10,7 @@ from app.models import (
     Customer,
     Deployment,
     Payment,
+    Policy,
     Service,
     ServiceLog,
     SupportTicket,
@@ -21,6 +22,7 @@ from app.models.enums import (
     LogLevel,
     PaymentStatus,
     PermissionType,
+    PolicyAction,
     RiskLevel,
 )
 
@@ -182,6 +184,68 @@ SEED_PERMISSIONS = [
     },
 ]
 
+SEED_POLICIES = [
+    {
+        "policy_key": "SUPPORT_REFUND_AUTONOMOUS",
+        "name": "Autonomous small refunds",
+        "description": "Support agent may issue refunds of $100 or less without approval.",
+        "agent_type": "support",
+        "tool_name": "refund_payment",
+        "priority": 100,
+        "action": PolicyAction.ALLOW,
+        "conditions": {
+            "all": [{"field": "arguments.amount", "operator": "lte", "value": 100}]
+        },
+    },
+    {
+        "policy_key": "SUPPORT_REFUND_APPROVAL",
+        "name": "Mid-size refunds require approval",
+        "description": "Refunds over $100 and up to $1000 require human approval.",
+        "agent_type": "support",
+        "tool_name": "refund_payment",
+        "priority": 100,
+        "action": PolicyAction.REQUIRE_APPROVAL,
+        "conditions": {
+            "all": [
+                {"field": "arguments.amount", "operator": "gt", "value": 100},
+                {"field": "arguments.amount", "operator": "lte", "value": 1000},
+            ]
+        },
+    },
+    {
+        "policy_key": "SUPPORT_REFUND_BLOCK",
+        "name": "Large refunds are blocked",
+        "description": "Refunds over $1000 are never autonomously authorized.",
+        "agent_type": "support",
+        "tool_name": "refund_payment",
+        "priority": 100,
+        "action": PolicyAction.BLOCK,
+        "conditions": {
+            "all": [{"field": "arguments.amount", "operator": "gt", "value": 1000}]
+        },
+    },
+    {
+        "policy_key": "DEVOPS_STAGING_DEPLOY",
+        "name": "Staging deploys are autonomous",
+        "description": "DevOps agent may deploy to staging without approval.",
+        "agent_type": "devops",
+        "tool_name": "deploy_staging",
+        "priority": 100,
+        "action": PolicyAction.ALLOW,
+        "conditions": {},
+    },
+    {
+        "policy_key": "DEVOPS_PRODUCTION_DEPLOY",
+        "name": "Production deploys require approval",
+        "description": "DevOps agent may never deploy to production without approval.",
+        "agent_type": "devops",
+        "tool_name": "deploy_production",
+        "priority": 100,
+        "action": PolicyAction.REQUIRE_APPROVAL,
+        "conditions": {},
+    },
+]
+
 SEED_SERVICE_NAME = "checkout-service"
 
 SEED_DEPLOYMENTS = [
@@ -241,6 +305,23 @@ def seed(db: Session) -> None:
             db.add(
                 AgentToolPermission(
                     agent_id=agent.id, tool_id=tool.id, permission=data["permission"]
+                )
+            )
+
+    for data in SEED_POLICIES:
+        existing = db.query(Policy).filter_by(policy_key=data["policy_key"]).one_or_none()
+        if existing is None:
+            tool = tools_by_name[data["tool_name"]]
+            db.add(
+                Policy(
+                    policy_key=data["policy_key"],
+                    name=data["name"],
+                    description=data["description"],
+                    agent_type=data["agent_type"],
+                    tool_id=tool.id,
+                    priority=data["priority"],
+                    action=data["action"],
+                    conditions=data["conditions"],
                 )
             )
 

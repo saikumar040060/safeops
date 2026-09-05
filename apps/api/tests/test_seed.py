@@ -3,6 +3,7 @@ from app.core.seed import (
     SEED_DEPLOYMENTS,
     SEED_PAYMENTS,
     SEED_PERMISSIONS,
+    SEED_POLICIES,
     SEED_SERVICE_LOGS,
     SEED_SUPPORT_TICKETS,
     SEED_TOOLS,
@@ -14,6 +15,7 @@ from app.models import (
     Customer,
     Deployment,
     Payment,
+    Policy,
     Service,
     ServiceLog,
     SupportTicket,
@@ -32,6 +34,7 @@ def test_seed_creates_expected_agents_and_tools(db_session):
     assert db_session.query(Service).count() == 1
     assert db_session.query(Deployment).count() == len(SEED_DEPLOYMENTS)
     assert db_session.query(ServiceLog).count() == len(SEED_SERVICE_LOGS)
+    assert db_session.query(Policy).count() == len(SEED_POLICIES)
 
     agent_names = {a.name for a in db_session.query(Agent).all()}
     tool_names = {t.name for t in db_session.query(Tool).all()}
@@ -53,6 +56,25 @@ def test_seed_is_idempotent(db_session):
     assert db_session.query(Deployment).count() == len(SEED_DEPLOYMENTS)
     assert db_session.query(ServiceLog).count() == len(SEED_SERVICE_LOGS)
     assert db_session.query(AgentToolPermission).count() == len(SEED_PERMISSIONS)
+    assert db_session.query(Policy).count() == len(SEED_POLICIES)
+
+
+def test_seed_policies_match_expected_keys(db_session):
+    seed(db_session)
+
+    policy_keys = {p.policy_key for p in db_session.query(Policy).all()}
+    assert policy_keys == {p["policy_key"] for p in SEED_POLICIES}
+
+    tool_names = {t.id: t.name for t in db_session.query(Tool).all()}
+    actual = {
+        (p.policy_key, p.agent_type, tool_names[p.tool_id], p.action.value): p.enabled
+        for p in db_session.query(Policy).all()
+    }
+    expected = {
+        (p["policy_key"], p["agent_type"], p["tool_name"], p["action"].value): True
+        for p in SEED_POLICIES
+    }
+    assert actual == expected
 
 
 def test_seed_permissions_match_expected_matrix(db_session):

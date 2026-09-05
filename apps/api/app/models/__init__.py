@@ -6,6 +6,8 @@ from app.models.customer import Customer
 from app.models.deployment import Deployment
 from app.models.execution import Execution
 from app.models.payment import Payment
+from app.models.policy import Policy
+from app.models.policy_decision import PolicyDecision
 from app.models.refund import Refund
 from app.models.service import Service
 from app.models.service_log import ServiceLog
@@ -22,6 +24,8 @@ __all__ = [
     "Deployment",
     "Execution",
     "Payment",
+    "Policy",
+    "PolicyDecision",
     "Refund",
     "Service",
     "ServiceLog",

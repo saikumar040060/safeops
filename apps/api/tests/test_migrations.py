@@ -24,6 +24,8 @@ EXPECTED_TABLES = {
     "service_logs",
     "agent_tool_permissions",
     "tool_requests",
+    "policies",
+    "policy_decisions",
 }
 EXPECTED_CHECKS = {
     "agents": {
@@ -46,6 +48,11 @@ EXPECTED_CHECKS = {
             "PERMISSION_CHECKED",
             "POLICY_CHECKED",
             "POLICY_EVALUATION_REQUIRED",
+            "POLICY_EVALUATION_STARTED",
+            "POLICY_MATCHED",
+            "POLICY_ALLOWED",
+            "POLICY_APPROVAL_REQUIRED",
+            "POLICY_BLOCKED",
             "RISK_ASSESSED",
             "ACTION_ALLOWED",
             "ACTION_DENIED",
@@ -62,7 +69,11 @@ EXPECTED_CHECKS = {
     "deployments": {"deploymentenvironment": {"STAGING", "PRODUCTION"}},
     "service_logs": {"loglevel": {"INFO", "WARN", "ERROR"}},
     "agent_tool_permissions": {"permissiontype": {"ALLOW", "DENY", "CONDITIONAL"}},
-    "tool_requests": {"toolrequeststatus": {"REQUESTED", "EXECUTED", "DENIED", "FAILED"}},
+    "tool_requests": {
+        "toolrequeststatus": {"REQUESTED", "EXECUTED", "DENIED", "FAILED", "REQUIRES_APPROVAL"}
+    },
+    "policies": {"policyaction": {"ALLOW", "REQUIRE_APPROVAL", "BLOCK"}},
+    "policy_decisions": {"policyaction": {"ALLOW", "REQUIRE_APPROVAL", "BLOCK"}},
 }
 
 
@@ -111,9 +122,18 @@ def test_upgrade_from_empty_database(alembic_config, db_engine):
         "approval_requests",
         "agent_tool_permissions",
         "tool_requests",
+        "policies",
+        "policy_decisions",
     ):
         foreign_keys = inspector.get_foreign_keys(table)
         assert all(fk["options"].get("ondelete") is None for fk in foreign_keys)
+
+    unique_constraints = inspector.get_unique_constraints("policies")
+    assert any(
+        constraint["name"] == "uq_policies_policy_key"
+        and constraint["column_names"] == ["policy_key"]
+        for constraint in unique_constraints
+    )
 
 
 def test_downgrade_to_base_then_restore(alembic_config, db_engine):

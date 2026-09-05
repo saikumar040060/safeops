@@ -9,8 +9,23 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Agent, AgentToolPermission, AuditEvent, Execution, Tool, ToolRequest
-from app.models.enums import AuditEventType, ExecutionStatus, PermissionType, ToolRequestStatus
+from app.models import (
+    Agent,
+    AgentToolPermission,
+    AuditEvent,
+    Execution,
+    PolicyDecision,
+    Tool,
+    ToolRequest,
+)
+from app.models.enums import (
+    AuditEventType,
+    ExecutionStatus,
+    PermissionType,
+    PolicyAction,
+    ToolRequestStatus,
+)
+from app.services.policy_engine import PolicyEvaluationResult, policy_engine
 from app.tools import ToolNotFoundError, tool_registry
 
 NON_EXECUTABLE_STATUSES = {
@@ -30,6 +45,8 @@ class GatewayResult(BaseModel):
     tool_result: dict[str, Any] | None = None
     decision: str | None = None
     reason: str | None = None
+    matched_policy: str | None = None
+    policy_id: str | None = None
 
 
 class ToolGateway:
@@ -192,39 +209,14 @@ class ToolGateway:
             )
 
         if permission_type == PermissionType.CONDITIONAL:
-            self._commit_chunk(
-                db,
-                execution.id,
-                lambda seq: [
-                    AuditEvent(
-                        execution_id=execution.id,
-                        sequence=seq,
-                        event_type=AuditEventType.PERMISSION_CHECKED,
-                        actor=agent.name,
-                        event_metadata={"tool_name": tool_name, "permission": "CONDITIONAL"},
-                    ),
-                    AuditEvent(
-                        execution_id=execution.id,
-                        sequence=seq + 1,
-                        event_type=AuditEventType.POLICY_EVALUATION_REQUIRED,
-                        actor=agent.name,
-                        event_metadata={"tool_name": tool_name},
-                    ),
-                    ToolRequest(
-                        execution_id=execution.id,
-                        agent_id=agent.id,
-                        tool_id=tool_row.id,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        status=ToolRequestStatus.REQUESTED,
-                    ),
-                ],
-            )
-            return GatewayResult(
-                status="NEEDS_POLICY_EVALUATION",
+            return self._handle_conditional(
+                db=db,
+                agent=agent,
+                execution=execution,
+                tool=tool,
+                tool_row=tool_row,
                 tool_name=tool_name,
-                decision="CONDITIONAL",
-                reason="Requires policy evaluation",
+                arguments=arguments,
             )
 
         # ALLOW: record the decision, then execute. The tool owns its own
@@ -251,6 +243,221 @@ class ToolGateway:
             ],
         )
 
+        tool_request = ToolRequest(
+            execution_id=execution.id,
+            agent_id=agent.id,
+            tool_id=tool_row.id,
+            tool_name=tool_name,
+            arguments=arguments,
+            status=ToolRequestStatus.REQUESTED,
+        )
+        return self._execute_and_record(
+            db=db,
+            agent=agent,
+            execution=execution,
+            tool=tool,
+            tool_name=tool_name,
+            arguments=arguments,
+            tool_request=tool_request,
+            decision_label="ALLOW",
+        )
+
+    def _handle_conditional(
+        self,
+        *,
+        db: Session,
+        agent: Agent,
+        execution: Execution,
+        tool: Any,
+        tool_row: Tool,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> GatewayResult:
+        pending_request = ToolRequest(
+            execution_id=execution.id,
+            agent_id=agent.id,
+            tool_id=tool_row.id,
+            tool_name=tool_name,
+            arguments=arguments,
+            status=ToolRequestStatus.REQUESTED,
+        )
+        self._commit_chunk(
+            db,
+            execution.id,
+            lambda seq: [
+                AuditEvent(
+                    execution_id=execution.id,
+                    sequence=seq,
+                    event_type=AuditEventType.PERMISSION_CHECKED,
+                    actor=agent.name,
+                    event_metadata={"tool_name": tool_name, "permission": "CONDITIONAL"},
+                ),
+                AuditEvent(
+                    execution_id=execution.id,
+                    sequence=seq + 1,
+                    event_type=AuditEventType.POLICY_EVALUATION_STARTED,
+                    actor=agent.name,
+                    event_metadata={"tool_name": tool_name},
+                ),
+                pending_request,
+            ],
+        )
+
+        # Read-only, deterministic evaluation. No lock is taken on the
+        # `policies` table: a concurrent policy edit between this read and
+        # our commit below can race, same accepted TOCTOU class as the
+        # Milestone 4 permission/execution check.
+        policy_result = policy_engine.evaluate(
+            agent=agent, tool=tool_row, arguments=arguments, execution=execution, db=db
+        )
+
+        policy_id = str(policy_result.policy_id) if policy_result.policy_id else None
+
+        if policy_result.decision == PolicyAction.ALLOW:
+            self._commit_chunk(
+                db,
+                execution.id,
+                self._policy_matched_rows(
+                    execution=execution,
+                    agent=agent,
+                    tool_row=tool_row,
+                    tool_name=tool_name,
+                    pending_request=pending_request,
+                    policy_result=policy_result,
+                    terminal_event=AuditEventType.POLICY_ALLOWED,
+                ),
+            )
+            return self._execute_and_record(
+                db=db,
+                agent=agent,
+                execution=execution,
+                tool=tool,
+                tool_name=tool_name,
+                arguments=arguments,
+                tool_request=pending_request,
+                decision_label="ALLOW",
+                matched_policy=policy_result.matched_policy,
+                policy_id=policy_id,
+            )
+
+        if policy_result.decision == PolicyAction.REQUIRE_APPROVAL:
+            pending_request.status = ToolRequestStatus.REQUIRES_APPROVAL
+            self._commit_chunk(
+                db,
+                execution.id,
+                self._policy_matched_rows(
+                    execution=execution,
+                    agent=agent,
+                    tool_row=tool_row,
+                    tool_name=tool_name,
+                    pending_request=pending_request,
+                    policy_result=policy_result,
+                    terminal_event=AuditEventType.POLICY_APPROVAL_REQUIRED,
+                ),
+            )
+            return GatewayResult(
+                status="REQUIRES_APPROVAL",
+                tool_name=tool_name,
+                decision="REQUIRE_APPROVAL",
+                reason=policy_result.reason,
+                matched_policy=policy_result.matched_policy,
+                policy_id=policy_id,
+            )
+
+        # BLOCK (including fail-closed NO_MATCHING_POLICY / POLICY_CONFLICT)
+        pending_request.status = ToolRequestStatus.DENIED
+        pending_request.completed_at = datetime.now(UTC)
+        pending_request.error = {"code": "POLICY_BLOCKED", "message": policy_result.reason}
+        self._commit_chunk(
+            db,
+            execution.id,
+            self._policy_matched_rows(
+                execution=execution,
+                agent=agent,
+                tool_row=tool_row,
+                tool_name=tool_name,
+                pending_request=pending_request,
+                policy_result=policy_result,
+                terminal_event=AuditEventType.POLICY_BLOCKED,
+            ),
+        )
+        return GatewayResult(
+            status="BLOCKED",
+            tool_name=tool_name,
+            decision="BLOCK",
+            reason=policy_result.reason,
+            matched_policy=policy_result.matched_policy,
+            policy_id=policy_id,
+        )
+
+    @staticmethod
+    def _policy_matched_rows(
+        *,
+        execution: Execution,
+        agent: Agent,
+        tool_row: Tool,
+        tool_name: str,
+        pending_request: ToolRequest,
+        policy_result: PolicyEvaluationResult,
+        terminal_event: AuditEventType,
+    ) -> Callable[[int], list[Any]]:
+        def build_rows(seq: int) -> list[Any]:
+            rows: list[Any] = []
+            if policy_result.matched_policy:
+                rows.append(
+                    AuditEvent(
+                        execution_id=execution.id,
+                        sequence=seq,
+                        event_type=AuditEventType.POLICY_MATCHED,
+                        actor=agent.name,
+                        event_metadata={
+                            "tool_name": tool_name,
+                            "matched_policy": policy_result.matched_policy,
+                        },
+                    )
+                )
+                seq += 1
+            rows.append(
+                AuditEvent(
+                    execution_id=execution.id,
+                    sequence=seq,
+                    event_type=terminal_event,
+                    actor=agent.name,
+                    event_metadata={"tool_name": tool_name, "reason": policy_result.reason},
+                )
+            )
+            rows.append(
+                PolicyDecision(
+                    execution_id=execution.id,
+                    agent_id=agent.id,
+                    tool_id=tool_row.id,
+                    tool_request_id=pending_request.id,
+                    decision=policy_result.decision,
+                    matched_policy_id=policy_result.policy_id,
+                    matched_policy_key=policy_result.matched_policy,
+                    reason=policy_result.reason,
+                    evaluated_context=policy_result.context,
+                )
+            )
+            rows.append(pending_request)
+            return rows
+
+        return build_rows
+
+    def _execute_and_record(
+        self,
+        *,
+        db: Session,
+        agent: Agent,
+        execution: Execution,
+        tool: Any,
+        tool_name: str,
+        arguments: dict[str, Any],
+        tool_request: ToolRequest,
+        decision_label: str,
+        matched_policy: str | None = None,
+        policy_id: str | None = None,
+    ) -> GatewayResult:
         try:
             result = tool.execute(arguments, db)
         except Exception:
@@ -261,6 +468,9 @@ class ToolGateway:
                 "code": "TOOL_EXECUTION_ERROR",
                 "message": "Tool execution raised an unexpected error",
             }
+            tool_request.status = ToolRequestStatus.FAILED
+            tool_request.completed_at = datetime.now(UTC)
+            tool_request.error = error
             self._commit_chunk(
                 db,
                 execution.id,
@@ -272,26 +482,22 @@ class ToolGateway:
                         actor=agent.name,
                         event_metadata={"tool_name": tool_name, "error": error},
                     ),
-                    ToolRequest(
-                        execution_id=execution.id,
-                        agent_id=agent.id,
-                        tool_id=tool_row.id,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        status=ToolRequestStatus.FAILED,
-                        completed_at=datetime.now(UTC),
-                        error=error,
-                    ),
+                    tool_request,
                 ],
             )
             return GatewayResult(
                 status="FAILED",
                 tool_name=tool_name,
-                decision="ALLOW",
+                decision=decision_label,
                 reason=error["message"],
+                matched_policy=matched_policy,
+                policy_id=policy_id,
             )
 
         if result.success:
+            tool_request.status = ToolRequestStatus.EXECUTED
+            tool_request.completed_at = datetime.now(UTC)
+            tool_request.result = result.data
             self._commit_chunk(
                 db,
                 execution.id,
@@ -303,23 +509,22 @@ class ToolGateway:
                         actor=agent.name,
                         event_metadata={"tool_name": tool_name},
                     ),
-                    ToolRequest(
-                        execution_id=execution.id,
-                        agent_id=agent.id,
-                        tool_id=tool_row.id,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        status=ToolRequestStatus.EXECUTED,
-                        completed_at=datetime.now(UTC),
-                        result=result.data,
-                    ),
+                    tool_request,
                 ],
             )
             return GatewayResult(
-                status="EXECUTED", tool_name=tool_name, tool_result=result.data, decision="ALLOW"
+                status="EXECUTED",
+                tool_name=tool_name,
+                tool_result=result.data,
+                decision=decision_label,
+                matched_policy=matched_policy,
+                policy_id=policy_id,
             )
 
         error = result.error.model_dump() if result.error else {"code": "UNKNOWN", "message": ""}
+        tool_request.status = ToolRequestStatus.FAILED
+        tool_request.completed_at = datetime.now(UTC)
+        tool_request.error = error
         self._commit_chunk(
             db,
             execution.id,
@@ -331,20 +536,16 @@ class ToolGateway:
                     actor=agent.name,
                     event_metadata={"tool_name": tool_name, "error": error},
                 ),
-                ToolRequest(
-                    execution_id=execution.id,
-                    agent_id=agent.id,
-                    tool_id=tool_row.id,
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    status=ToolRequestStatus.FAILED,
-                    completed_at=datetime.now(UTC),
-                    error=error,
-                ),
+                tool_request,
             ],
         )
         return GatewayResult(
-            status="FAILED", tool_name=tool_name, decision="ALLOW", reason=error.get("message")
+            status="FAILED",
+            tool_name=tool_name,
+            decision=decision_label,
+            reason=error.get("message"),
+            matched_policy=matched_policy,
+            policy_id=policy_id,
         )
 
     @staticmethod
