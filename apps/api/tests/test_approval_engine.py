@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -15,7 +16,7 @@ from app.models import (
     Service,
     ToolRequest,
 )
-from app.models.enums import ExecutionStatus, PaymentStatus, ToolRequestStatus
+from app.models.enums import AuditEventType, ExecutionStatus, PaymentStatus, ToolRequestStatus
 from app.services.approval_engine import ApprovalEngine
 from app.services.tool_gateway import ToolGateway
 
@@ -75,6 +76,33 @@ def test_require_approval_creates_approval_request(seeded_db):
 
     execution_row = seeded_db.get(Execution, execution.id)
     assert execution_row.status == ExecutionStatus.WAITING_APPROVAL
+
+
+def test_require_approval_reapplies_execution_state_after_audit_retry(seeded_db, monkeypatch):
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent)
+    original_commit = seeded_db.commit
+    collision_raised = False
+
+    class SequenceCollision(Exception):
+        class diag:
+            constraint_name = "uq_audit_events_execution_sequence"
+
+    def collide_once():
+        nonlocal collision_raised
+        has_new_approval = any(isinstance(row, ApprovalRequest) for row in seeded_db.new)
+        if has_new_approval and not collision_raised:
+            collision_raised = True
+            raise IntegrityError(None, None, SequenceCollision())
+        original_commit()
+
+    monkeypatch.setattr(seeded_db, "commit", collide_once)
+    result, _ = _request_refund_approval(seeded_db, agent=agent, execution=execution)
+
+    assert collision_raised is True
+    assert result.status == "REQUIRES_APPROVAL"
+    seeded_db.refresh(execution)
+    assert execution.status == ExecutionStatus.WAITING_APPROVAL
 
 
 def test_stored_arguments_match_original_request(seeded_db):
@@ -162,8 +190,45 @@ def test_reject_causes_zero_side_effects(seeded_db):
     assert execution_row.status == ExecutionStatus.RUNNING
 
 
+def test_rejection_reapplies_state_after_audit_retry(seeded_db, monkeypatch):
+    result, execution = _request_refund_approval(seeded_db)
+    original_commit = seeded_db.commit
+    collision_raised = False
+
+    class SequenceCollision(Exception):
+        class diag:
+            constraint_name = "uq_audit_events_execution_sequence"
+
+    def collide_once():
+        nonlocal collision_raised
+        has_rejection_event = any(
+            isinstance(row, AuditEvent)
+            and row.event_type == AuditEventType.APPROVAL_REJECTED
+            for row in seeded_db.new
+        )
+        if has_rejection_event and not collision_raised:
+            collision_raised = True
+            raise IntegrityError(None, None, SequenceCollision())
+        original_commit()
+
+    monkeypatch.setattr(seeded_db, "commit", collide_once)
+    reject_result = approval_engine.reject(
+        approval_id=uuid.UUID(result.approval_request_id),
+        resolved_by="bob",
+        reason=None,
+        db=seeded_db,
+    )
+
+    assert collision_raised is True
+    assert reject_result.status == "REJECTED"
+    tool_request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
+    assert tool_request.status == ToolRequestStatus.DENIED
+    seeded_db.refresh(execution)
+    assert execution.status == ExecutionStatus.RUNNING
+
+
 def test_expired_approval_cannot_execute(seeded_db):
-    result, _ = _request_refund_approval(seeded_db)
+    result, execution = _request_refund_approval(seeded_db)
     approval = seeded_db.get(ApprovalRequest, uuid.UUID(result.approval_request_id))
     approval.expires_at = datetime.now(UTC) - timedelta(minutes=1)
     seeded_db.commit()
@@ -177,6 +242,11 @@ def test_expired_approval_cannot_execute(seeded_db):
 
     seeded_db.refresh(approval)
     assert approval.status.value == "EXPIRED"
+    tool_request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
+    assert tool_request.status == ToolRequestStatus.DENIED
+    assert tool_request.error["code"] == "APPROVAL_EXPIRED"
+    seeded_db.refresh(execution)
+    assert execution.status == ExecutionStatus.RUNNING
     payment = seeded_db.query(Payment).filter_by(payment_id="PAY-9003").one()
     assert payment.status.value == "SUCCEEDED"
 
@@ -231,6 +301,50 @@ def test_concurrent_approve_attempts_execute_once(seeded_db, db_engine):
         .count()
     )
     assert executed_requests == 1
+
+
+def test_concurrent_gateway_calls_create_only_one_approval(
+    seeded_db, db_engine, monkeypatch
+):
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent)
+
+    from threading import Barrier
+
+    from app.services import tool_gateway as tool_gateway_module
+
+    barrier = Barrier(2)
+    original_evaluate = tool_gateway_module.policy_engine.evaluate
+
+    def synchronized_evaluate(**kwargs):
+        result = original_evaluate(**kwargs)
+        barrier.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(tool_gateway_module.policy_engine, "evaluate", synchronized_evaluate)
+
+    def call_gateway(index):
+        with Session(db_engine) as session:
+            return gateway.execute(
+                agent_id=agent.id,
+                execution_id=execution.id,
+                tool_name="refund_payment",
+                arguments={
+                    "payment_id": "PAY-9003",
+                    "amount": "750.00",
+                    "reason": "concurrent approval request",
+                    "idempotency_key": f"concurrent-gateway-{index}",
+                },
+                db=session,
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(call_gateway, range(2)))
+
+    assert sorted(result.status for result in results) == ["FAILED", "REQUIRES_APPROVAL"]
+    seeded_db.expire_all()
+    assert seeded_db.query(ApprovalRequest).filter_by(execution_id=execution.id).count() == 1
+    assert seeded_db.get(Execution, execution.id).status == ExecutionStatus.WAITING_APPROVAL
 
 
 def test_approve_after_reject_fails(seeded_db):

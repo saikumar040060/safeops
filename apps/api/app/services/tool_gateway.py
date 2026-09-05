@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -36,6 +36,10 @@ NON_EXECUTABLE_STATUSES = {
     ExecutionStatus.FAILED,
     ExecutionStatus.BLOCKED,
 }
+
+
+class ApprovalStateConflictError(RuntimeError):
+    pass
 
 
 def _json_safe(value: Any) -> Any:
@@ -368,8 +372,9 @@ class ToolGateway:
             )
 
         if policy_result.decision == PolicyAction.REQUIRE_APPROVAL:
+            approval_requested_at = datetime.now(UTC)
             pending_request.status = ToolRequestStatus.REQUIRES_APPROVAL
-            pending_request.completed_at = datetime.now(UTC)
+            pending_request.completed_at = approval_requested_at
             policy_decision_id = uuid.uuid4()
             approval_id = uuid.uuid4()
             approval = approval_engine.create_approval(
@@ -383,9 +388,26 @@ class ToolGateway:
                 risk_level=tool_row.risk_category,
                 reason=policy_result.reason,
             )
-            execution.status = ExecutionStatus.WAITING_APPROVAL
 
             def build_rows(seq: int) -> list[Any]:
+                # Atomically admit only one pending approval per execution. Two
+                # concurrent gateway calls may both have read RUNNING before
+                # either reaches this point.
+                transitioned = db.execute(
+                    update(Execution)
+                    .where(
+                        Execution.id == execution.id,
+                        Execution.status == ExecutionStatus.RUNNING,
+                    )
+                    .values(status=ExecutionStatus.WAITING_APPROVAL)
+                ).rowcount
+                if transitioned == 0:
+                    raise ApprovalStateConflictError
+
+                # commit_chunk may roll the session back after an audit-sequence
+                # collision. Reapply transient request state on every attempt.
+                pending_request.status = ToolRequestStatus.REQUIRES_APPROVAL
+                pending_request.completed_at = approval_requested_at
                 rows: list[Any] = []
                 if policy_result.matched_policy:
                     rows.append(
@@ -450,7 +472,18 @@ class ToolGateway:
                 rows.append(approval)
                 return rows
 
-            self._commit_chunk(db, execution.id, build_rows)
+            try:
+                self._commit_chunk(db, execution.id, build_rows)
+            except ApprovalStateConflictError:
+                db.rollback()
+                return GatewayResult(
+                    status="FAILED",
+                    tool_name=tool_name,
+                    decision="REQUIRE_APPROVAL",
+                    reason="Execution is already waiting for approval",
+                    matched_policy=policy_result.matched_policy,
+                    policy_id=policy_id,
+                )
             return GatewayResult(
                 status="REQUIRES_APPROVAL",
                 tool_name=tool_name,

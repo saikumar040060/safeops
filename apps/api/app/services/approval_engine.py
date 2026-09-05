@@ -144,17 +144,19 @@ class ApprovalEngine:
         agent = db.get(Agent, approval.agent_id)
 
         if not approve:
-            tool_request.status = ToolRequestStatus.DENIED
-            tool_request.completed_at = now
-            tool_request.error = {
+            rejection_error = {
                 "code": "APPROVAL_REJECTED",
                 "message": rejection_reason or "Rejected by approver",
             }
-            execution.status = ExecutionStatus.RUNNING
-            commit_chunk(
-                db,
-                execution.id,
-                lambda seq: [
+
+            def build_rejection_rows(seq: int) -> list[Any]:
+                # Reapply on every commit_chunk attempt because its collision
+                # rollback restores persistent ORM state from the database.
+                tool_request.status = ToolRequestStatus.DENIED
+                tool_request.completed_at = now
+                tool_request.error = rejection_error
+                execution.status = ExecutionStatus.RUNNING
+                return [
                     AuditEvent(
                         execution_id=execution.id,
                         sequence=seq,
@@ -166,7 +168,13 @@ class ApprovalEngine:
                         },
                     ),
                     tool_request,
-                ],
+                    execution,
+                ]
+
+            commit_chunk(
+                db,
+                execution.id,
+                build_rejection_rows,
             )
             return ApprovalActionResult(
                 status="REJECTED", approval_id=str(approval.id), approval_status="REJECTED"
@@ -293,23 +301,25 @@ class ApprovalEngine:
         db: Session,
     ) -> ApprovalActionResult:
         now = datetime.now(UTC)
-        approval.status = ApprovalStatus.EXECUTED
-        approval.executed_at = now
-        tool_request.status = ToolRequestStatus.EXECUTED if success else ToolRequestStatus.FAILED
-        tool_request.completed_at = now
-        tool_request.result = result
-        tool_request.error = error
-        execution.status = ExecutionStatus.RUNNING
-
         event_type = (
             AuditEventType.APPROVED_ACTION_EXECUTED
             if success
             else AuditEventType.APPROVED_ACTION_FAILED
         )
-        commit_chunk(
-            db,
-            execution.id,
-            lambda seq: [
+
+        def build_outcome_rows(seq: int) -> list[Any]:
+            # Reapply on every commit_chunk attempt because its collision
+            # rollback restores persistent ORM state from the database.
+            approval.status = ApprovalStatus.EXECUTED
+            approval.executed_at = now
+            tool_request.status = (
+                ToolRequestStatus.EXECUTED if success else ToolRequestStatus.FAILED
+            )
+            tool_request.completed_at = now
+            tool_request.result = result
+            tool_request.error = error
+            execution.status = ExecutionStatus.RUNNING
+            return [
                 AuditEvent(
                     execution_id=execution.id,
                     sequence=seq,
@@ -321,8 +331,10 @@ class ApprovalEngine:
                 ),
                 approval,
                 tool_request,
-            ],
-        )
+                execution,
+            ]
+
+        commit_chunk(db, execution.id, build_outcome_rows)
 
         return ApprovalActionResult(
             status="EXECUTED" if success else "FAILED",
@@ -350,10 +362,11 @@ class ApprovalEngine:
         db.commit()
         db.refresh(approval)
         if expired:
-            commit_chunk(
-                db,
-                approval.execution_id,
-                lambda seq: [
+            tool_request = db.get(ToolRequest, approval.tool_request_id)
+            execution = db.get(Execution, approval.execution_id)
+
+            def build_expiry_rows(seq: int) -> list[Any]:
+                rows: list[Any] = [
                     AuditEvent(
                         execution_id=approval.execution_id,
                         sequence=seq,
@@ -364,5 +377,26 @@ class ApprovalEngine:
                             "tool_name": approval.tool_name,
                         },
                     )
-                ],
+                ]
+                if (
+                    tool_request is not None
+                    and tool_request.execution_id == approval.execution_id
+                    and tool_request.status == ToolRequestStatus.REQUIRES_APPROVAL
+                ):
+                    tool_request.status = ToolRequestStatus.DENIED
+                    tool_request.completed_at = now
+                    tool_request.error = {
+                        "code": "APPROVAL_EXPIRED",
+                        "message": "Approval request expired",
+                    }
+                    rows.append(tool_request)
+                if execution is not None and execution.status == ExecutionStatus.WAITING_APPROVAL:
+                    execution.status = ExecutionStatus.RUNNING
+                    rows.append(execution)
+                return rows
+
+            commit_chunk(
+                db,
+                approval.execution_id,
+                build_expiry_rows,
             )

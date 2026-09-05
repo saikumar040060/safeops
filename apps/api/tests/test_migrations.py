@@ -1,12 +1,19 @@
+import uuid
 from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
 from sqlalchemy import inspect
+from sqlalchemy.orm import Session
 
 from alembic import command
 from app.core.database import Base
+from app.core.seed import seed
+from app.models import Agent, ApprovalRequest, Execution
+from app.models.enums import ExecutionStatus
+from app.services.approval_engine import ApprovalEngine
+from app.services.tool_gateway import ToolGateway
 
 API_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TABLES = {
@@ -153,3 +160,67 @@ def test_downgrade_to_base_then_restore(alembic_config, db_engine):
     command.upgrade(alembic_config, "head")
     tables = set(inspect(db_engine).get_table_names())
     assert EXPECTED_TABLES.issubset(tables)
+
+
+def test_approval_migration_round_trip_with_resolved_rows(alembic_config, db_engine):
+    _reset_to_empty(alembic_config, db_engine)
+    command.upgrade(alembic_config, "head")
+
+    gateway = ToolGateway()
+    approval_engine = ApprovalEngine()
+    with Session(db_engine) as session:
+        seed(session)
+        agent = session.query(Agent).filter_by(name="support-agent").one()
+
+        approval_ids = []
+        for suffix in ("approved", "rejected"):
+            execution = Execution(
+                agent_id=agent.id,
+                objective=f"migration {suffix}",
+                status=ExecutionStatus.RUNNING,
+            )
+            session.add(execution)
+            session.commit()
+            result = gateway.execute(
+                agent_id=agent.id,
+                execution_id=execution.id,
+                tool_name="refund_payment",
+                arguments={
+                    "payment_id": "PAY-9003",
+                    "amount": "750.00",
+                    "reason": "migration round trip",
+                    "idempotency_key": f"migration-{suffix}-{uuid.uuid4()}",
+                },
+                db=session,
+            )
+            approval_ids.append(uuid.UUID(result.approval_request_id))
+
+        approved = approval_engine.approve(
+            approval_id=approval_ids[0], resolved_by="migration-review", db=session
+        )
+        rejected = approval_engine.reject(
+            approval_id=approval_ids[1],
+            resolved_by="migration-review",
+            reason="migration rejection",
+            db=session,
+        )
+        assert approved.status == "EXECUTED"
+        assert rejected.status == "REJECTED"
+        assert session.query(ApprovalRequest).count() == 2
+
+    command.downgrade(alembic_config, "92c9d30a5b8d")
+    with db_engine.connect() as connection:
+        count = connection.execute(sa.text("SELECT count(*) FROM approval_requests")).scalar()
+        assert count == 0
+
+    command.upgrade(alembic_config, "head")
+    approval_columns = {
+        column["name"] for column in inspect(db_engine).get_columns("approval_requests")
+    }
+    assert {
+        "tool_request_id",
+        "policy_decision_id",
+        "approved_arguments",
+        "expires_at",
+        "executed_at",
+    }.issubset(approval_columns)
