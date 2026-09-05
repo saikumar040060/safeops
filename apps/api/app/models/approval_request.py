@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import DateTime, Enum, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB
@@ -20,8 +20,14 @@ class ApprovalRequest(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     execution_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("executions.id"), index=True)
     agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id"), index=True)
+    tool_request_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tool_requests.id"), index=True
+    )
+    policy_decision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("policy_decisions.id"), index=True
+    )
     tool_name: Mapped[str] = mapped_column(String(255), index=True)
-    arguments: Mapped[dict] = mapped_column(JSONB, default=dict)
+    approved_arguments: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     risk_level: Mapped[RiskLevel] = mapped_column(
         Enum(RiskLevel, native_enum=False, length=16, create_constraint=True)
     )
@@ -34,8 +40,10 @@ class ApprovalRequest(Base):
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     resolved_by: Mapped[str | None] = mapped_column(String(255), default=None)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     execution: Mapped["Execution"] = relationship(back_populates="approval_requests")
     agent: Mapped["Agent"] = relationship(back_populates="approval_requests")

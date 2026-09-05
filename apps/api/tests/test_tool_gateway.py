@@ -183,6 +183,7 @@ def test_refund_100_01_requires_approval_and_does_not_execute(seeded_db):
         "POLICY_EVALUATION_STARTED",
         "POLICY_MATCHED",
         "POLICY_APPROVAL_REQUIRED",
+        "APPROVAL_REQUESTED",
     ]
 
 
@@ -402,6 +403,7 @@ def test_devops_agent_deploy_production_requires_approval_and_does_not_execute(s
         "POLICY_EVALUATION_STARTED",
         "POLICY_MATCHED",
         "POLICY_APPROVAL_REQUIRED",
+        "APPROVAL_REQUESTED",
     ]
 
 

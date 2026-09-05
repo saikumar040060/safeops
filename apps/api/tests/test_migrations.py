@@ -37,7 +37,7 @@ EXPECTED_CHECKS = {
         "executionstatus": {"RUNNING", "WAITING_APPROVAL", "COMPLETED", "FAILED", "BLOCKED"}
     },
     "approval_requests": {
-        "approvalstatus": {"PENDING", "APPROVED", "REJECTED", "EXPIRED"},
+        "approvalstatus": {"PENDING", "APPROVED", "REJECTED", "EXPIRED", "EXECUTED"},
         "risklevel": {"LOW", "MEDIUM", "HIGH", "CRITICAL"},
     },
     "audit_events": {
@@ -59,6 +59,12 @@ EXPECTED_CHECKS = {
             "ACTION_BLOCKED",
             "APPROVAL_REQUESTED",
             "APPROVAL_GRANTED",
+            "APPROVAL_APPROVED",
+            "APPROVAL_REJECTED",
+            "APPROVAL_EXPIRED",
+            "APPROVED_ACTION_EXECUTION_STARTED",
+            "APPROVED_ACTION_EXECUTED",
+            "APPROVED_ACTION_FAILED",
             "TOOL_EXECUTED",
             "TOOL_FAILED",
             "SECURITY_INCIDENT",

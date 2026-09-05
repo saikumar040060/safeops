@@ -23,7 +23,7 @@ class AuditEvent(Base):
     execution_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("executions.id"), index=True)
     sequence: Mapped[int] = mapped_column(Integer)
     event_type: Mapped[AuditEventType] = mapped_column(
-        Enum(AuditEventType, native_enum=False, length=32, create_constraint=True), index=True
+        Enum(AuditEventType, native_enum=False, length=64, create_constraint=True), index=True
     )
     actor: Mapped[str] = mapped_column(String(255))
     event_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)

@@ -1,13 +1,25 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.models import Agent, ApprovalRequest, AuditEvent, Execution, Tool
+from app.models import (
+    Agent,
+    ApprovalRequest,
+    AuditEvent,
+    Execution,
+    PolicyDecision,
+    Tool,
+    ToolRequest,
+)
 from app.models.enums import (
     AgentStatus,
     ApprovalStatus,
     AuditEventType,
     ExecutionStatus,
+    PolicyAction,
     RiskLevel,
+    ToolRequestStatus,
 )
 
 
@@ -90,13 +102,39 @@ def test_audit_event_and_approval_request_relationships(db_session):
         actor=f"agent:{agent.name}",
         event_metadata={"tool": tool.name},
     )
+    tool_request = ToolRequest(
+        execution_id=execution.id,
+        agent_id=agent.id,
+        tool_id=tool.id,
+        tool_name=tool.name,
+        arguments={"payment_id": "PAY-9001", "amount": 750},
+        status=ToolRequestStatus.REQUESTED,
+    )
+    db_session.add(tool_request)
+    db_session.flush()
+
+    policy_decision = PolicyDecision(
+        execution_id=execution.id,
+        agent_id=agent.id,
+        tool_id=tool.id,
+        tool_request_id=tool_request.id,
+        decision=PolicyAction.REQUIRE_APPROVAL,
+        reason="Matched policy 'TEST_POLICY'",
+        evaluated_context={},
+    )
+    db_session.add(policy_decision)
+    db_session.flush()
+
     approval = ApprovalRequest(
         execution_id=execution.id,
         agent_id=agent.id,
+        tool_request_id=tool_request.id,
+        policy_decision_id=policy_decision.id,
         tool_name=tool.name,
-        arguments={"payment_id": "PAY-9001", "amount": 750},
+        approved_arguments={"payment_id": "PAY-9001", "amount": 750},
         risk_level=RiskLevel.HIGH,
         reason="Duplicate transaction detected",
+        expires_at=datetime.now(UTC) + timedelta(minutes=15),
     )
     db_session.add_all([event, approval])
     db_session.commit()
@@ -106,7 +144,7 @@ def test_audit_event_and_approval_request_relationships(db_session):
     assert approval in execution.approval_requests
     assert approval.agent.id == agent.id
     assert approval.status == ApprovalStatus.PENDING
-    assert approval.arguments["amount"] == 750
+    assert approval.approved_arguments["amount"] == 750
     assert event.event_metadata["tool"] == "refund_payment_test"
 
 

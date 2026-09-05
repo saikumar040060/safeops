@@ -5,8 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -25,8 +24,12 @@ from app.models.enums import (
     PolicyAction,
     ToolRequestStatus,
 )
+from app.services.approval_engine import ApprovalEngine
+from app.services.audit import commit_chunk
 from app.services.policy_engine import PolicyEvaluationResult, policy_engine
 from app.tools import ToolNotFoundError, tool_registry
+
+approval_engine = ApprovalEngine()
 
 NON_EXECUTABLE_STATUSES = {
     ExecutionStatus.COMPLETED,
@@ -47,6 +50,7 @@ class GatewayResult(BaseModel):
     reason: str | None = None
     matched_policy: str | None = None
     policy_id: str | None = None
+    approval_request_id: str | None = None
 
 
 class ToolGateway:
@@ -79,6 +83,13 @@ class ToolGateway:
                 status="FAILED",
                 tool_name=tool_name,
                 reason=f"Execution is {execution.status.value} and cannot accept new tool calls",
+            )
+
+        if execution.status == ExecutionStatus.WAITING_APPROVAL:
+            return GatewayResult(
+                status="FAILED",
+                tool_name=tool_name,
+                reason="Execution is waiting for approval and cannot accept new tool calls",
             )
 
         arguments = _json_safe(arguments)
@@ -358,19 +369,88 @@ class ToolGateway:
 
         if policy_result.decision == PolicyAction.REQUIRE_APPROVAL:
             pending_request.status = ToolRequestStatus.REQUIRES_APPROVAL
-            self._commit_chunk(
-                db,
-                execution.id,
-                self._policy_matched_rows(
-                    execution=execution,
-                    agent=agent,
-                    tool_row=tool_row,
-                    tool_name=tool_name,
-                    pending_request=pending_request,
-                    policy_result=policy_result,
-                    terminal_event=AuditEventType.POLICY_APPROVAL_REQUIRED,
-                ),
+            pending_request.completed_at = datetime.now(UTC)
+            policy_decision_id = uuid.uuid4()
+            approval_id = uuid.uuid4()
+            approval = approval_engine.create_approval(
+                approval_id=approval_id,
+                execution_id=execution.id,
+                agent_id=agent.id,
+                tool_request_id=pending_request.id,
+                policy_decision_id=policy_decision_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                risk_level=tool_row.risk_category,
+                reason=policy_result.reason,
             )
+            execution.status = ExecutionStatus.WAITING_APPROVAL
+
+            def build_rows(seq: int) -> list[Any]:
+                rows: list[Any] = []
+                if policy_result.matched_policy:
+                    rows.append(
+                        AuditEvent(
+                            execution_id=execution.id,
+                            sequence=seq,
+                            event_type=AuditEventType.POLICY_MATCHED,
+                            actor=agent.name,
+                            event_metadata={
+                                "tool_name": tool_name,
+                                "matched_policy": policy_result.matched_policy,
+                            },
+                        )
+                    )
+                    seq += 1
+                rows.append(
+                    AuditEvent(
+                        execution_id=execution.id,
+                        sequence=seq,
+                        event_type=AuditEventType.POLICY_APPROVAL_REQUIRED,
+                        actor=agent.name,
+                        event_metadata={"tool_name": tool_name, "reason": policy_result.reason},
+                    )
+                )
+                seq += 1
+                rows.append(
+                    AuditEvent(
+                        execution_id=execution.id,
+                        sequence=seq,
+                        event_type=AuditEventType.APPROVAL_REQUESTED,
+                        actor=agent.name,
+                        event_metadata={
+                            "approval_id": str(approval_id),
+                            "tool_name": tool_name,
+                        },
+                    )
+                )
+                # ApprovalRequest.policy_decision_id FKs to this row, and both
+                # are brand-new in this same flush with no relationship()
+                # declared between the two classes -- SQLAlchemy's automatic
+                # insert ordering only follows declared relationships, not
+                # raw FK columns, so it won't know to insert this first.
+                # Flush it explicitly before returning `approval` below. Safe
+                # to retry: a rolled-back attempt leaves no row behind for the
+                # same pre-generated id.
+                db.add(
+                    PolicyDecision(
+                        id=policy_decision_id,
+                        execution_id=execution.id,
+                        agent_id=agent.id,
+                        tool_id=tool_row.id,
+                        tool_request_id=pending_request.id,
+                        decision=policy_result.decision,
+                        matched_policy_id=policy_result.policy_id,
+                        matched_policy_key=policy_result.matched_policy,
+                        reason=policy_result.reason,
+                        evaluated_context=policy_result.context,
+                    )
+                )
+                db.flush()
+                rows.append(pending_request)
+                rows.append(approval)
+                return rows
+
+            self._commit_chunk(db, execution.id, build_rows)
             return GatewayResult(
                 status="REQUIRES_APPROVAL",
                 tool_name=tool_name,
@@ -378,6 +458,7 @@ class ToolGateway:
                 reason=policy_result.reason,
                 matched_policy=policy_result.matched_policy,
                 policy_id=policy_id,
+                approval_request_id=str(approval_id),
             )
 
         # BLOCK (including fail-closed NO_MATCHING_POLICY / POLICY_CONFLICT)
@@ -568,24 +649,4 @@ class ToolGateway:
     def _commit_chunk(
         db: Session, execution_id: uuid.UUID, build_rows: Callable[[int], list[Any]]
     ) -> None:
-        for attempt in range(5):
-            base_seq = (
-                db.scalar(
-                    select(func.max(AuditEvent.sequence)).where(
-                        AuditEvent.execution_id == execution_id
-                    )
-                )
-                or 0
-            ) + 1
-            for row in build_rows(base_seq):
-                db.add(row)
-            try:
-                db.commit()
-                return
-            except IntegrityError as exc:
-                db.rollback()
-                constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
-                if constraint_name != "uq_audit_events_execution_sequence":
-                    raise
-                if attempt == 4:
-                    raise
+        commit_chunk(db, execution_id, build_rows)
