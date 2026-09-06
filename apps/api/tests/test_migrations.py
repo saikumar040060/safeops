@@ -10,8 +10,16 @@ from sqlalchemy.orm import Session
 from alembic import command
 from app.core.database import Base
 from app.core.seed import seed
-from app.models import Agent, ApprovalRequest, Execution, RiskAssessment, SecurityIncident
+from app.models import (
+    Agent,
+    ApprovalRequest,
+    Execution,
+    ExecutionStep,
+    RiskAssessment,
+    SecurityIncident,
+)
 from app.models.enums import ExecutionStatus
+from app.services.agent_runtime import AgentRuntime
 from app.services.approval_engine import ApprovalEngine
 from app.services.tool_gateway import ToolGateway
 
@@ -35,6 +43,7 @@ EXPECTED_TABLES = {
     "policy_decisions",
     "risk_assessments",
     "security_incidents",
+    "execution_steps",
 }
 EXPECTED_CHECKS = {
     "agents": {
@@ -43,7 +52,15 @@ EXPECTED_CHECKS = {
     },
     "tools": {"risklevel": {"LOW", "MEDIUM", "HIGH", "CRITICAL"}},
     "executions": {
-        "executionstatus": {"RUNNING", "WAITING_APPROVAL", "COMPLETED", "FAILED", "BLOCKED"}
+        "executionstatus": {
+            "CREATED",
+            "RUNNING",
+            "WAITING_APPROVAL",
+            "COMPLETED",
+            "FAILED",
+            "BLOCKED",
+            "CANCELLED",
+        }
     },
     "approval_requests": {
         "approvalstatus": {"PENDING", "APPROVED", "REJECTED", "EXPIRED", "EXECUTED"},
@@ -83,6 +100,13 @@ EXPECTED_CHECKS = {
             "RISK_ESCALATED",
             "ACTION_BLOCKED_BY_RISK",
             "SECURITY_INCIDENT_CREATED",
+            "EXECUTION_STEP_STARTED",
+            "EXECUTION_STEP_COMPLETED",
+            "EXECUTION_WAITING_APPROVAL",
+            "EXECUTION_RESUMED",
+            "EXECUTION_BLOCKED",
+            "EXECUTION_FAILED",
+            "EXECUTION_CANCELLED",
         }
     },
     "payments": {"paymentstatus": {"SUCCEEDED", "REFUNDED"}},
@@ -113,6 +137,10 @@ EXPECTED_CHECKS = {
         },
         "risklevel": {"LOW", "MEDIUM", "HIGH", "CRITICAL"},
         "incidentstatus": {"OPEN", "RESOLVED", "DISMISSED"},
+    },
+    "execution_steps": {
+        "steptype": {"PLAN", "TOOL_CALL", "TOOL_RESULT", "APPROVAL_WAIT", "FINAL"},
+        "stepstatus": {"PENDING", "COMPLETED", "WAITING_APPROVAL", "BLOCKED", "FAILED"},
     },
 }
 
@@ -159,6 +187,13 @@ def test_upgrade_from_empty_database(alembic_config, db_engine):
         for constraint in unique_constraints
     )
 
+    unique_constraints = inspector.get_unique_constraints("execution_steps")
+    assert any(
+        constraint["name"] == "uq_execution_steps_execution_sequence"
+        and constraint["column_names"] == ["execution_id", "sequence"]
+        for constraint in unique_constraints
+    )
+
     for table in (
         "executions",
         "audit_events",
@@ -169,6 +204,7 @@ def test_upgrade_from_empty_database(alembic_config, db_engine):
         "policy_decisions",
         "risk_assessments",
         "security_incidents",
+        "execution_steps",
     ):
         foreign_keys = inspector.get_foreign_keys(table)
         assert all(fk["options"].get("ondelete") is None for fk in foreign_keys)
@@ -334,3 +370,67 @@ def test_risk_engine_migration_round_trip_with_real_rows(alembic_config, db_engi
         )
         assert result.status == "EXECUTED"
         assert session.query(RiskAssessment).filter_by(execution_id=execution.id).count() == 1
+
+
+def test_agent_runtime_migration_round_trip_with_real_steps(alembic_config, db_engine):
+    _reset_to_empty(alembic_config, db_engine)
+    command.upgrade(alembic_config, "head")
+
+    agent_runtime = AgentRuntime()
+    with Session(db_engine) as session:
+        seed(session)
+        agent = session.query(Agent).filter_by(name="devops-agent").one()
+        start = agent_runtime.start_execution(
+            agent_id=agent.id,
+            objective="Deploy checkout-service version 9.9.9 to staging",
+            db=session,
+        )
+        execution_id = uuid.UUID(start.execution_id)
+        step_result = agent_runtime.step(execution_id, session)
+        assert step_result.status == "EXECUTED"
+        assert session.query(ExecutionStep).filter_by(execution_id=execution_id).count() == 1
+
+        cancel_result = agent_runtime.cancel(execution_id, session)
+        assert cancel_result.status == "CANCELLED"
+        execution = session.get(Execution, execution_id)
+        assert execution.status == ExecutionStatus.CANCELLED
+
+    command.downgrade(alembic_config, "54813d0a7504")
+    with db_engine.connect() as connection:
+        tables = set(inspect(db_engine).get_table_names())
+        assert "execution_steps" not in tables
+        cancelled_remaining = connection.execute(
+            sa.text("SELECT count(*) FROM executions WHERE status = 'CANCELLED'")
+        ).scalar()
+        assert cancelled_remaining == 0
+        remaining_step_events = connection.execute(
+            sa.text(
+                "SELECT count(*) FROM audit_events WHERE event_type IN ("
+                "'EXECUTION_STEP_STARTED', 'EXECUTION_STEP_COMPLETED', "
+                "'EXECUTION_WAITING_APPROVAL', 'EXECUTION_RESUMED', 'EXECUTION_BLOCKED', "
+                "'EXECUTION_FAILED', 'EXECUTION_CANCELLED')"
+            )
+        ).scalar()
+        assert remaining_step_events == 0
+        # The normalized-not-deleted execution row itself must survive the
+        # downgrade, remapped to a pre-milestone-8 status.
+        preserved_execution = connection.execute(
+            sa.text("SELECT status FROM executions WHERE id = :id"),
+            {"id": str(execution_id)},
+        ).scalar()
+        assert preserved_execution == "FAILED"
+
+    command.upgrade(alembic_config, "head")
+    tables = set(inspect(db_engine).get_table_names())
+    assert "execution_steps" in tables
+
+    # Re-upgraded schema must accept new runtime activity again.
+    with Session(db_engine) as session:
+        agent = session.query(Agent).filter_by(name="support-agent").one()
+        start = agent_runtime.start_execution(
+            agent_id=agent.id, objective="test objective", db=session
+        )
+        new_execution_id = uuid.UUID(start.execution_id)
+        assert session.get(Execution, new_execution_id).status == ExecutionStatus.RUNNING
+        cancel_result = agent_runtime.cancel(new_execution_id, session)
+        assert cancel_result.status == "CANCELLED"
