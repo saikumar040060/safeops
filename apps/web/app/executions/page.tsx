@@ -75,8 +75,16 @@ export default function ExecutionsPage() {
               {data.map((execution) => (
                 <TableRow
                   key={execution.id}
-                  className="cursor-pointer"
+                  role="link"
+                  tabIndex={0}
+                  className="cursor-pointer focus-visible:bg-muted focus-visible:outline-none"
                   onClick={() => router.push(`/executions/${execution.id}`)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      router.push(`/executions/${execution.id}`);
+                    }
+                  }}
                 >
                   <TableCell className="max-w-xs truncate font-medium">
                     {execution.objective}
