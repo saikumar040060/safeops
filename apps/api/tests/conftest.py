@@ -61,3 +61,18 @@ def db_session(db_engine):
 def seeded_db(db_session):
     seed(db_session)
     return db_session
+
+
+@pytest.fixture()
+def client(seeded_db):
+    from fastapi.testclient import TestClient
+
+    from app.core.database import get_db
+    from app.main import app
+
+    app.dependency_overrides[get_db] = lambda: seeded_db
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        app.dependency_overrides.pop(get_db, None)

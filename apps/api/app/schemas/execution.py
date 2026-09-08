@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from app.models.enums import ExecutionStatus, StepStatus, StepType
+from app.schemas.audit_event import AuditEventRead
 
 
 class ExecutionRead(BaseModel):
@@ -33,3 +34,15 @@ class ExecutionStepRead(BaseModel):
     output: dict[str, Any] | None
     created_at: datetime
     completed_at: datetime | None
+
+
+class ExecutionSummary(ExecutionRead):
+    current_step: str | None = None
+    latest_risk_level: str | None = None
+    updated_at: datetime
+
+
+class ExecutionTimeline(BaseModel):
+    execution: ExecutionRead
+    steps: list[ExecutionStepRead]
+    audit_events: list[AuditEventRead]
