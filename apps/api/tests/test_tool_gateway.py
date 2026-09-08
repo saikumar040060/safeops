@@ -714,6 +714,26 @@ def test_completed_execution_cannot_call_tools(seeded_db):
     assert seeded_db.query(ToolRequest).count() == 0
 
 
+def test_cancelled_execution_cannot_call_tools(seeded_db):
+    # Regression: NON_EXECUTABLE_STATUSES must include CANCELLED (a
+    # milestone 8 status) or a cancellation racing an in-flight
+    # AgentRuntime step can let the tool execute anyway -- see
+    # test_agent_runtime.py's cancellation-race regression tests.
+    agent = _agent(seeded_db, "support-agent")
+    execution = _make_execution(seeded_db, agent, status=ExecutionStatus.CANCELLED)
+
+    result = gateway.execute(
+        agent_id=agent.id,
+        execution_id=execution.id,
+        tool_name="read_customer",
+        arguments={"customer_id": "CUST-1001"},
+        db=seeded_db,
+    )
+
+    assert result.status == "FAILED"
+    assert seeded_db.query(ToolRequest).count() == 0
+
+
 def test_invalid_tool_arguments(seeded_db):
     agent = _agent(seeded_db, "support-agent")
     execution = _make_execution(seeded_db, agent)

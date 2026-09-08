@@ -16,7 +16,7 @@ from app.models import (
     SecurityIncident,
     ToolRequest,
 )
-from app.models.enums import ExecutionStatus, StepStatus
+from app.models.enums import ExecutionStatus, StepStatus, ToolRequestStatus
 from app.services import agent_runtime as agent_runtime_module
 from app.services import planner as planner_module
 from app.services.agent_runtime import AgentRuntime
@@ -632,3 +632,160 @@ def test_concurrent_resume_cannot_double_run(seeded_db, db_engine):
     )
     assert refund_requests == 1
     assert seeded_db.get(Execution, execution_id).stepping is False
+
+
+# ---------------------------------------------------------------------------
+# Regression: cancellation racing an in-flight step must never let the tool
+# execute. ToolGateway's own NON_EXECUTABLE_STATUSES set did not originally
+# include CANCELLED (a milestone 8 status), so a cancel() landing between the
+# runtime's ExecutionStep claim and the gateway's own fresh status read could
+# let the tool run anyway. See ToolGateway.NON_EXECUTABLE_STATUSES.
+# ---------------------------------------------------------------------------
+
+
+def test_cancellation_race_prevents_tool_execution_deterministic(seeded_db, monkeypatch):
+    agent = _agent(seeded_db, "devops-agent")
+    start = runtime.start_execution(
+        agent_id=agent.id,
+        objective="Deploy checkout-service version 8.8.8 to staging",
+        db=seeded_db,
+    )
+    execution_id = uuid.UUID(start.execution_id)
+    r1 = runtime.step(execution_id, seeded_db)
+    assert r1.status == "EXECUTED" and r1.tool_name == "get_deployment"
+
+    original_claim_step = AgentRuntime._claim_step
+
+    def racing_claim_step(db, exec_id, step_type, input_data):
+        step = original_claim_step(db, exec_id, step_type, input_data)
+        if step is not None and input_data.get("tool_name") == "deploy_staging":
+            # Simulate a concurrent cancel() landing right after the step is
+            # claimed (and committed) but before the gateway call runs.
+            cancel_result = runtime.cancel(exec_id, seeded_db)
+            assert cancel_result.status == "CANCELLED"
+        return step
+
+    monkeypatch.setattr(AgentRuntime, "_claim_step", staticmethod(racing_claim_step))
+
+    r2 = runtime.step(execution_id, seeded_db)
+    assert r2.status == "FAILED"
+    assert "CANCELLED" in (r2.reason or "")
+
+    seeded_db.expire_all()
+    execution = seeded_db.get(Execution, execution_id)
+    assert execution.status == ExecutionStatus.CANCELLED
+    assert seeded_db.query(Deployment).filter_by(version="8.8.8").count() == 0
+    tool_requests = (
+        seeded_db.query(ToolRequest)
+        .filter_by(execution_id=execution_id, tool_name="deploy_staging")
+        .all()
+    )
+    assert all(tr.status.value != "EXECUTED" for tr in tool_requests)
+
+
+def test_cancellation_race_stress_with_real_threads(db_engine, seeded_db):
+    # Real concurrent sessions, repeated: fire step() and cancel() from
+    # separate connections at (as close to) the same instant, many times,
+    # and assert the safety invariant holds on every single iteration --
+    # cancellation must never coexist with a side effect it should have
+    # prevented, regardless of which side wins the race.
+    agent_id = _agent(seeded_db, "devops-agent").id
+
+    for i in range(15):
+        with Session(db_engine) as setup:
+            start = runtime.start_execution(
+                agent_id=agent_id,
+                objective=f"Deploy checkout-service version 7.{i}.0 to staging",
+                db=setup,
+            )
+            execution_id = uuid.UUID(start.execution_id)
+            first = runtime.step(execution_id, setup)
+            assert first.status == "EXECUTED"
+
+        barrier = Barrier(2)
+
+        def call_step():
+            with Session(db_engine) as session:
+                barrier.wait(timeout=5)
+                return runtime.step(execution_id, session)
+
+        def call_cancel():
+            with Session(db_engine) as session:
+                barrier.wait(timeout=5)
+                return runtime.cancel(execution_id, session)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            step_future = executor.submit(call_step)
+            cancel_future = executor.submit(call_cancel)
+            step_future.result(timeout=10)
+            cancel_result = cancel_future.result(timeout=10)
+
+        with Session(db_engine) as check:
+            execution = check.get(Execution, execution_id)
+            deployed = (
+                check.query(Deployment).filter_by(version=f"7.{i}.0").count() > 0
+            )
+            executed_requests = (
+                check.query(ToolRequest)
+                .filter_by(
+                    execution_id=execution_id,
+                    tool_name="deploy_staging",
+                    status=ToolRequestStatus.EXECUTED,
+                )
+                .count()
+            )
+
+            if execution.status == ExecutionStatus.CANCELLED:
+                # Cancellation won (or the step lost/conflicted): no deploy
+                # side effect may exist under a CANCELLED execution.
+                assert not deployed, f"iteration {i}: deploy happened under CANCELLED"
+                assert executed_requests == 0
+            else:
+                # The step won outright before cancel's CAS landed: cancel
+                # must have been a clean NOOP, never silently discarded.
+                assert cancel_result.status in ("CANCELLED", "NOOP")
+                if cancel_result.status == "NOOP":
+                    assert execution.status in (
+                        ExecutionStatus.RUNNING,
+                        ExecutionStatus.WAITING_APPROVAL,
+                        ExecutionStatus.COMPLETED,
+                        ExecutionStatus.FAILED,
+                        ExecutionStatus.BLOCKED,
+                    )
+
+            assert execution.stepping is False, f"iteration {i}: stepping flag left claimed"
+
+
+def test_concurrent_step_cannot_double_deploy_staging(db_engine, seeded_db):
+    # deploy_staging has no tool-layer idempotency key (unlike
+    # refund_payment). The only thing preventing a concurrency-driven
+    # double-deploy is the runtime's Execution.stepping claim -- verify it
+    # holds under real concurrent sessions, repeated.
+    agent_id = _agent(seeded_db, "devops-agent").id
+
+    for i in range(10):
+        with Session(db_engine) as setup:
+            start = runtime.start_execution(
+                agent_id=agent_id,
+                objective=f"Deploy checkout-service version 6.{i}.0 to staging",
+                db=setup,
+            )
+            execution_id = uuid.UUID(start.execution_id)
+            first = runtime.step(execution_id, setup)
+            assert first.status == "EXECUTED"
+
+        barrier = Barrier(2)
+
+        def call_step():
+            with Session(db_engine) as session:
+                barrier.wait(timeout=5)
+                return runtime.step(execution_id, session)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _: call_step(), range(2)))
+
+        assert sorted(r.status for r in results) == ["CONFLICT", "EXECUTED"]
+
+        with Session(db_engine) as check:
+            deployments = check.query(Deployment).filter_by(version=f"6.{i}.0").count()
+            assert deployments == 1, f"iteration {i}: expected one deploy, got {deployments}"

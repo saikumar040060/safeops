@@ -40,6 +40,7 @@ NON_EXECUTABLE_STATUSES = {
     ExecutionStatus.COMPLETED,
     ExecutionStatus.FAILED,
     ExecutionStatus.BLOCKED,
+    ExecutionStatus.CANCELLED,
 }
 
 # The highest-severity signal present decides the SecurityIncident's
