@@ -1,0 +1,5 @@
+# Dependencies for the CALL-E adapter (integrations/calle/agent.py) and
+# its demo scripts. Deliberately kept out of apps/api/requirements.txt --
+# this code never runs inside the SafeOps API process.
+calle-ai==0.7.0
+requests==2.32.3
