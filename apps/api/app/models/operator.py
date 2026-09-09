@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, String, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,10 +29,20 @@ class Operator(Base):
     the scope-based `require_scope` check, VIEWER can only read -- it can
     never approve or execute. `role` and `integration_scopes` are
     deliberately two independent authorization dimensions that are never
-    combined.
+    combined. This is a real, DB-enforced CHECK constraint
+    (`ck_operators_integration_role_viewer`), not just a seeding
+    convention -- found missing during the Milestone 11 security review,
+    where the invariant was documented here but nothing actually stopped
+    a future INTEGRATION row from being created with an elevated role.
     """
 
     __tablename__ = "operators"
+    __table_args__ = (
+        CheckConstraint(
+            "principal_type != 'INTEGRATION' OR role = 'VIEWER'",
+            name="ck_operators_integration_role_viewer",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(String(255), unique=True, index=True)

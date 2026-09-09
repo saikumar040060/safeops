@@ -43,14 +43,19 @@ Configuration (environment variables):
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 import uuid
 from pathlib import Path
+from typing import Any
 
 import mcp.types as types
 from mcp.server.lowlevel.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
+from mcp.shared.exceptions import MCPError
+
+logger = logging.getLogger("safeops.mcp")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "shared"))
 
@@ -64,6 +69,32 @@ def _env(name: str) -> str:
     return value
 
 
+def _parse_sources(raw_sources: Any) -> list[Source] | None:
+    """Strict, defensive parsing of the `_sources` convention (see
+    on_call_tool below): malformed shapes must never reach an unguarded
+    dict/attribute access, since an uncaught exception here would
+    otherwise propagate out of the handler and the underlying `mcp`
+    package's own dispatcher falls back to putting the raw Python
+    exception message on the wire (`ErrorData(code=0, message=str(e))`,
+    see mcp/shared/jsonrpc_dispatcher.py) -- confirmed by hand against a
+    malformed `_sources: ["not-a-dict"]` call during this milestone's
+    security review. Raising ValueError here is still caught by the
+    handler's own catch-all below, which never echoes exception text."""
+    if not raw_sources:
+        return None
+    if not isinstance(raw_sources, list):
+        raise ValueError("_sources must be a list")
+    parsed: list[Source] = []
+    for item in raw_sources:
+        if not isinstance(item, dict) or not isinstance(item.get("type"), str):
+            raise ValueError("_sources entries must be objects with string 'type'/'content'")
+        content = item.get("content")
+        if not isinstance(content, str):
+            raise ValueError("_sources entries must be objects with string 'type'/'content'")
+        parsed.append(Source(type=item["type"], content=content))
+    return parsed
+
+
 def build_server(client: SafeOpsClient, safeops_agent_id: str) -> Server:
     async def on_list_tools(
         context: ServerRequestContext, params: types.PaginatedRequestParams | None
@@ -73,7 +104,17 @@ def build_server(client: SafeOpsClient, safeops_agent_id: str) -> Server:
                 client.list_tools, safeops_agent_id=safeops_agent_id
             )
         except SafeOpsAPIError as exc:
-            raise RuntimeError(f"SafeOps tool discovery failed: {exc.code} {exc.message}") from exc
+            # A stable, curated error (never raw exception text) reaches
+            # the wire via MCPError's own ErrorData -- see on_call_tool's
+            # comment for why this matters.
+            raise MCPError(
+                code=types.INTERNAL_ERROR, message=f"SafeOps tool discovery failed: {exc.code}"
+            ) from exc
+        except Exception as exc:
+            logger.exception("on_list_tools failed")
+            raise MCPError(
+                code=types.INTERNAL_ERROR, message="SafeOps tool discovery failed unexpectedly"
+            ) from exc
         tools = [
             types.Tool(
                 name=d["name"],
@@ -100,12 +141,8 @@ def build_server(client: SafeOpsClient, safeops_agent_id: str) -> Server:
         # app/services/external_action_service.py::_normalize_sources) --
         # this convention cannot be used to mark injected content trusted.
         raw_sources = arguments.pop("_sources", None)
-        sources = (
-            [Source(type=s["type"], content=s["content"]) for s in raw_sources]
-            if raw_sources
-            else None
-        )
         try:
+            sources = _parse_sources(raw_sources)
             action = await asyncio.to_thread(
                 client.submit_action,
                 external_request_id=external_request_id,
@@ -122,6 +159,25 @@ def build_server(client: SafeOpsClient, safeops_agent_id: str) -> Server:
             # the MCP client, unlike an internal traceback.
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text=f"{exc.code}: {exc.message}")],
+                is_error=True,
+            )
+        except Exception:
+            # Last-resort safety net: without this, an unexpected exception
+            # (malformed `_sources`, a network error, ...) propagates out of
+            # this handler and the underlying `mcp` package's own dispatcher
+            # falls back to putting the raw Python exception message on the
+            # wire verbatim (confirmed by hand during this milestone's
+            # security review -- see _parse_sources' docstring). Never
+            # str(exc) here, for the same reason the API layer never
+            # returns raw exception text.
+            logger.exception("on_call_tool failed for tool %r", params.name)
+            return types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text="INTERNAL_ERROR: the request could not be processed.",
+                    )
+                ],
                 is_error=True,
             )
 

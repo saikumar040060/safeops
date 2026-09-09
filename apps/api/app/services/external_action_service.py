@@ -137,6 +137,7 @@ class ExternalActionService:
             tool_name=request.tool_name,
             arguments=request.arguments,
             objective=request.objective,
+            sources=[{"type": s.type, "content": s.content} for s in request.sources],
         )
 
         existing = self._find_existing(operator.id, request.external_request_id, db)

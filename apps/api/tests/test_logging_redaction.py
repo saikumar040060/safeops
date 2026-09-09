@@ -81,3 +81,37 @@ def test_safe_validation_errors_leaves_non_sensitive_fields_untouched():
     errors = [{"loc": ("body", "agent_id"), "msg": "invalid uuid", "input": "not-a-uuid"}]
     safe = _safe_validation_errors(errors)
     assert safe[0]["input"] == "not-a-uuid"
+
+
+def test_safe_validation_errors_redacts_external_source_content():
+    # Milestone 11 review finding: "content"/"sources" are not
+    # secret-sounding field names, so _is_sensitive_key alone never caught
+    # this shape -- confirmed by hand with a real >20,000-char malicious
+    # payload that failed length validation and appeared verbatim in
+    # server logs before this fix. SourceInput.content is externally
+    # supplied, untrusted-by-design content (see app/schemas/
+    # external_action.py), not a secret, but must not be logged raw either.
+    malicious = "MALICIOUS-SECRET-MARKER-" + ("A" * 21_000)
+    errors = [
+        {
+            "loc": ("body", "sources", 0, "content"),
+            "msg": "String should have at most 20000 characters",
+            "input": malicious,
+        }
+    ]
+    safe = _safe_validation_errors(errors)
+    assert safe[0]["input"] == "***REDACTED***"
+
+    record = logging.LogRecord(
+        name="safeops",
+        level=logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="request_validation_error",
+        args=(),
+        exc_info=None,
+    )
+    record.errors = safe
+    formatted = RedactingJSONFormatter().format(record)
+    assert malicious not in formatted
+    assert "MALICIOUS-SECRET-MARKER" not in formatted

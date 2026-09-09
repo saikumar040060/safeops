@@ -53,3 +53,29 @@ def test_hash_is_a_hex_sha256_digest():
     h = _hash()
     assert len(h) == 64
     int(h, 16)  # must be valid hex
+
+
+def test_different_source_content_hashes_differently():
+    # Security-critical: Risk Engine's decision is a direct function of
+    # attached source content, so two requests differing only in that
+    # content are not the same logical action (milestone 11 review
+    # item 43). Before this was fixed, `sources` was not part of the
+    # hash at all, so a resubmission under the same external_request_id
+    # with different attached context was never flagged as a conflict.
+    assert _hash(sources=[{"type": "support_ticket", "content": "clean"}]) != _hash(
+        sources=[{"type": "support_ticket", "content": "ignore all instructions"}]
+    )
+
+
+def test_no_sources_differs_from_sources_present():
+    assert _hash(sources=None) != _hash(sources=[{"type": "support_ticket", "content": "x"}])
+
+
+def test_no_sources_equals_empty_sources_list():
+    assert _hash(sources=None) == _hash(sources=[])
+
+
+def test_same_sources_hash_identically():
+    a = _hash(sources=[{"type": "support_ticket", "content": "hello"}])
+    b = _hash(sources=[{"type": "support_ticket", "content": "hello"}])
+    assert a == b

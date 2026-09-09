@@ -41,16 +41,32 @@ def _is_generic_error_detail(detail: Any) -> bool:
     return isinstance(detail, dict) and "code" in detail and "message" in detail
 
 
+# Milestone 11 review finding: an external caller's `sources` field is
+# UNTRUSTED, externally-supplied, potentially attacker-crafted free text
+# by this milestone's own explicit design (see SourceInput in
+# app/schemas/external_action.py) -- unlike a plain secret, matching it by
+# key name alone (_is_sensitive_key) never catches it, since "content" and
+# "sources" are not secret-sounding names. Confirmed by hand: before this
+# was added, a >20,000-char malicious payload that failed length
+# validation was logged verbatim server-side via the warning below.
+_UNTRUSTED_CONTENT_LOC_SEGMENTS = {"sources"}
+
+
 def _safe_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """pydantic's ValidationError.errors() carries the field path in `loc`
     and the raw submitted value in `input` -- two separate keys, so
     key-name-based redaction (which only looks at the key holding a value,
     not a sibling key) never catches this shape on its own. Redact `input`
-    whenever any segment of `loc` looks like a secret field name."""
+    whenever any segment of `loc` looks like a secret field name, or names
+    a field this codebase documents as externally-supplied untrusted
+    content (see _UNTRUSTED_CONTENT_LOC_SEGMENTS above)."""
     safe = []
     for error in errors:
         loc = error.get("loc") or ()
-        if any(_is_sensitive_key(str(segment)) for segment in loc) and "input" in error:
+        loc_strs = [str(segment) for segment in loc]
+        is_sensitive = any(_is_sensitive_key(s) for s in loc_strs)
+        is_untrusted_content = any(s in _UNTRUSTED_CONTENT_LOC_SEGMENTS for s in loc_strs)
+        if (is_sensitive or is_untrusted_content) and "input" in error:
             error = {**error, "input": "***REDACTED***"}
         safe.append(error)
     return safe
