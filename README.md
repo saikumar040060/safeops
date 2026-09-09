@@ -47,8 +47,11 @@ authorization path.
   headers, a locked-down demo mode, and a startup check that refuses to
   boot in production with an unsafe configuration.
 - **External agent integration layer** — a generic REST API plus an MCP
-  (Model Context Protocol) stdio adapter that let external agents and
-  agent frameworks use SafeOps without weakening any of the above. See
+  (Model Context Protocol) stdio adapter, a real AWS Strands agent
+  ([`docs/strands.md`](docs/strands.md)), and a real CALL-E voice-call
+  integration ([`docs/calle.md`](docs/calle.md)) — all thin wrappers
+  around the same API, so external agents and agent frameworks use
+  SafeOps without weakening any of the above. See
   [External integrations & MCP](#external-integrations--mcp) below.
 - **Frontend dashboard** (Next.js) — live execution list/detail with
   timeline and audit trail, an approval center, and a security/incidents
@@ -66,10 +69,13 @@ apps/
   web/            Next.js dashboard
 integrations/
   mcp/            MCP stdio adapter (protocol translator only, no DB access)
-  shared/         Generic HTTP SDK client used by the MCP adapter and by
-                  any other external agent framework
+  strands/        Real AWS Strands agent using the generic API
+  calle/          Real CALL-E voice-call integration using the generic API
+  shared/         Generic HTTP SDK client used by every adapter above
   external_agent/ Example script using the generic SDK directly
-docs/             Architecture, security model, integrations/MCP, demo flow
+docs/             Architecture, security model, integrations/MCP/Strands/CALL-E, demo flow
+submissions/      Hackathon submission write-ups (demo scripts, disclosure,
+                  setup) — not part of the application itself
 infra/            Dockerfiles
 packages/         Reserved for future extraction of shared engine code;
                   not used by the current single-service backend
