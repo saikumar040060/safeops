@@ -1,0 +1,7 @@
+# Dependencies for the Strands adapter (integrations/strands/agent.py) and
+# its demo scripts. Deliberately kept out of apps/api/requirements.txt --
+# this code never runs inside the SafeOps API process. The [anthropic]
+# extra is optional -- omit it and configure AWS credentials instead to
+# use the base package's BedrockModel.
+strands-agents[anthropic]==1.55.0
+requests==2.32.3
