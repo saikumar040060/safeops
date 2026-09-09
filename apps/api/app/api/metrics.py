@@ -3,14 +3,23 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.metrics import snapshot_latency
+from app.core.metrics import snapshot_counters, snapshot_latency
 from app.core.security import require_permission
-from app.models import ApprovalRequest, AuditEvent, Execution, SecurityIncident, ToolRequest
+from app.models import (
+    ApprovalRequest,
+    AuditEvent,
+    Execution,
+    ExternalActionRequest,
+    SecurityIncident,
+    ToolRequest,
+)
 from app.models.enums import (
     ApprovalStatus,
     AuditEventType,
     ExecutionStatus,
+    ExternalActionStatus,
     IncidentStatus,
+    IntegrationType,
     ToolRequestStatus,
 )
 
@@ -74,6 +83,41 @@ def get_metrics(db: Session = Depends(get_db)) -> dict:
         or 0
     )
 
+    external_requests_total = (
+        db.scalar(select(func.count()).select_from(ExternalActionRequest)) or 0
+    )
+    external_requests_blocked_total = (
+        db.scalar(
+            select(func.count())
+            .select_from(ExternalActionRequest)
+            .where(ExternalActionRequest.status == ExternalActionStatus.BLOCKED)
+        )
+        or 0
+    )
+    external_requests_waiting_approval = (
+        db.scalar(
+            select(func.count())
+            .select_from(ExternalActionRequest)
+            .where(ExternalActionRequest.status == ExternalActionStatus.WAITING_APPROVAL)
+        )
+        or 0
+    )
+    mcp_tool_calls_total = (
+        db.scalar(
+            select(func.count())
+            .select_from(ExternalActionRequest)
+            .where(ExternalActionRequest.integration_type == IntegrationType.MCP)
+        )
+        or 0
+    )
+
+    # integration_auth_failures_total / idempotency_conflicts_total never
+    # persist any row by design (an auth failure or a rejected conflicting
+    # payload must not mutate state) -- these two are the only in-process,
+    # non-durable counters here; see app/core/metrics.py for why and its
+    # documented multi-worker limitation.
+    process_counters = snapshot_counters()
+
     return {
         "executions_started_total": executions_started_total,
         "executions_blocked_total": executions_blocked_total,
@@ -81,5 +125,13 @@ def get_metrics(db: Session = Depends(get_db)) -> dict:
         "risk_blocks_total": risk_blocks_total,
         "security_incidents_open": security_incidents_open,
         "tool_failures_total": tool_failures_total,
+        "external_requests_total": external_requests_total,
+        "external_requests_blocked_total": external_requests_blocked_total,
+        "external_requests_waiting_approval": external_requests_waiting_approval,
+        "mcp_tool_calls_total": mcp_tool_calls_total,
+        "integration_auth_failures_total": process_counters.get(
+            "integration_auth_failures_total", 0
+        ),
+        "idempotency_conflicts_total": process_counters.get("idempotency_conflicts_total", 0),
         "request_latency": snapshot_latency(),
     }

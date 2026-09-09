@@ -34,6 +34,12 @@ class ExecutionStepRead(BaseModel):
     output: dict[str, Any] | None
     created_at: datetime
     completed_at: datetime | None
+    # Milestone 11: derived (never stored on ExecutionStep itself) by
+    # joining ExternalActionRequest.tool_request_id in the timeline
+    # endpoint -- "internal" for every step the planner drove before this
+    # milestone existed, so no backfill/migration was needed for this.
+    source: str = "internal"
+    integration_name: str | None = None
 
 
 class ExecutionSummary(ExecutionRead):

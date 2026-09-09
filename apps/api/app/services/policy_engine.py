@@ -61,9 +61,7 @@ class PolicyEngine:
         }
 
         candidates = list(
-            db.scalars(
-                select(Policy).where(Policy.tool_id == tool.id, Policy.enabled.is_(True))
-            )
+            db.scalars(select(Policy).where(Policy.tool_id == tool.id, Policy.enabled.is_(True)))
         )
 
         rank1 = [p for p in candidates if p.agent_id == agent.id]

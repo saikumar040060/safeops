@@ -101,6 +101,8 @@ export type ExecutionStep = {
   output: Record<string, unknown> | null;
   created_at: string;
   completed_at: string | null;
+  source: "internal" | "external_generic" | "external_mcp";
+  integration_name: string | null;
 };
 
 export type AuditEvent = {

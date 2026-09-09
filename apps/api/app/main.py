@@ -10,6 +10,7 @@ from app.api.auth import router as auth_router
 from app.api.dashboard import router as dashboard_router
 from app.api.executions import router as executions_router
 from app.api.health import router as health_router
+from app.api.integrations import router as integrations_router
 from app.api.metrics import router as metrics_router
 from app.api.ready import router as ready_router
 from app.api.security import router as security_router
@@ -70,3 +71,4 @@ app.include_router(agents_router, prefix="/api")
 app.include_router(security_router, prefix="/api")
 app.include_router(audit_router, prefix="/api")
 app.include_router(metrics_router, prefix="/api")
+app.include_router(integrations_router, prefix="/api")

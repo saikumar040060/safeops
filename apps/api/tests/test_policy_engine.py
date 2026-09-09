@@ -109,9 +109,7 @@ def test_exact_agent_policy_beats_agent_type_policy(seeded_db):
     )
     seeded_db.commit()
 
-    result = _evaluate(
-        seeded_db, agent, tool, {"service_name": "checkout-service", "version": "1"}
-    )
+    result = _evaluate(seeded_db, agent, tool, {"service_name": "checkout-service", "version": "1"})
 
     assert result.decision == PolicyAction.ALLOW
     assert result.matched_policy == "TEST_EXACT_AGENT_ALLOW"
@@ -141,9 +139,7 @@ def test_non_matching_exact_agent_policy_falls_through_to_agent_type(seeded_db):
     )
     seeded_db.commit()
 
-    result = _evaluate(
-        seeded_db, agent, tool, {"service_name": "checkout-service", "version": "1"}
-    )
+    result = _evaluate(seeded_db, agent, tool, {"service_name": "checkout-service", "version": "1"})
 
     assert result.decision == PolicyAction.REQUIRE_APPROVAL
     assert result.matched_policy == "DEVOPS_PRODUCTION_DEPLOY"
@@ -174,9 +170,7 @@ def test_no_rank_matches_falls_closed(seeded_db):
     )
     seeded_db.commit()
 
-    result = _evaluate(
-        seeded_db, agent, tool, {"service_name": "checkout-service", "version": "1"}
-    )
+    result = _evaluate(seeded_db, agent, tool, {"service_name": "checkout-service", "version": "1"})
 
     assert result.decision == PolicyAction.BLOCK
     assert "NO_MATCHING_POLICY" in result.reason

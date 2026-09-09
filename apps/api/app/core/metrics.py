@@ -1,11 +1,16 @@
-"""Minimal in-process request-latency tracking, in the same spirit as
-app/core/rate_limit.py: a single dict guarded by a lock, appropriate for
-the current single-process architecture. Everything else /api/metrics
-reports is derived directly from durable state (row counts), which is
-naturally correct across restarts and multiple workers without needing a
-shared counter store -- only latency needs live in-process tracking."""
+"""Minimal in-process request-latency + event-counter tracking, in the
+same spirit as app/core/rate_limit.py: plain dicts guarded by a lock,
+appropriate for the current single-process architecture. Most of
+/api/metrics is derived directly from durable state (row counts), which is
+naturally correct across restarts and multiple workers -- these two
+in-process trackers exist only for events that deliberately never persist
+any row (auth failures, idempotency conflicts), so there is nothing
+durable to count them from. Same documented limitation as
+app/core/rate_limit.py: with >1 worker each process has independent
+counts, not a combined total."""
 
 import time
+from collections import defaultdict
 from threading import Lock
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -14,6 +19,19 @@ from starlette.types import ASGIApp
 
 _lock = Lock()
 _latency: dict[str, dict[str, float]] = {}
+
+_counters_lock = Lock()
+_counters: dict[str, int] = defaultdict(int)
+
+
+def increment_counter(name: str) -> None:
+    with _counters_lock:
+        _counters[name] += 1
+
+
+def snapshot_counters() -> dict[str, int]:
+    with _counters_lock:
+        return dict(_counters)
 
 
 class LatencyMiddleware(BaseHTTPMiddleware):

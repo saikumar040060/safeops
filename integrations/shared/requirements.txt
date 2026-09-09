@@ -1,0 +1,4 @@
+# Minimal HTTP client dependency for integrations/shared/client.py.
+# Deliberately kept separate from apps/api/requirements.txt: this code
+# never runs inside the SafeOps API process, it only calls it over HTTP.
+requests==2.32.3

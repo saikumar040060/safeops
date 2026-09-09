@@ -1,0 +1,7 @@
+# Dependencies for the MCP stdio adapter (integrations/mcp/server.py) and
+# its demo scripts. Deliberately kept out of apps/api/requirements.txt --
+# this code never runs inside the SafeOps API process; see
+# docs/mcp.md "Dependency footprint" for why this is a separate,
+# reviewed dependency tree and what it pulls in transitively.
+mcp==2.2.0
+requests==2.32.3

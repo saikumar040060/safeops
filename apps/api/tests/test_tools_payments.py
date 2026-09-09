@@ -78,6 +78,7 @@ def test_concurrent_duplicate_refund_is_idempotent(seeded_db, db_engine):
 
     event.listen(db_engine, "after_cursor_execute", synchronize_reads)
     try:
+
         def execute_refund():
             with Session(db_engine) as session:
                 return tool.execute(args, session)
@@ -105,9 +106,7 @@ def test_refund_payment_rejects_distinct_key_after_refund(seeded_db):
     }
     assert tool.execute(original, seeded_db).success is True
 
-    result = tool.execute(
-        {**original, "idempotency_key": "refund-pay-9003-distinct"}, seeded_db
-    )
+    result = tool.execute({**original, "idempotency_key": "refund-pay-9003-distinct"}, seeded_db)
 
     assert result.success is False
     assert result.error.code == "ALREADY_REFUNDED"

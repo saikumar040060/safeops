@@ -17,6 +17,8 @@ function makeStep(overrides: Partial<ExecutionStep>): ExecutionStep {
     output: { status: "EXECUTED", decision: "ALLOW" },
     created_at: "2026-01-01T00:00:00Z",
     completed_at: "2026-01-01T00:00:01Z",
+    source: "internal",
+    integration_name: null,
     ...overrides,
   };
 }
@@ -53,6 +55,21 @@ describe("ExecutionTimelineView", () => {
     ];
     renderWithQuery(<ExecutionTimelineView steps={steps} />);
     expect(screen.getByText(/UNTRUSTED: support_ticket/)).toBeInTheDocument();
+  });
+
+  it("shows the integration source badge only for externally-driven steps", () => {
+    const steps = [
+      makeStep({ sequence: 1, input: { tool_name: "read_customer" } }),
+      makeStep({
+        sequence: 2,
+        input: { tool_name: "refund_payment" },
+        source: "external_mcp",
+        integration_name: "MCP Support Integration (Demo)",
+      }),
+    ];
+    renderWithQuery(<ExecutionTimelineView steps={steps} />);
+    expect(screen.queryByText(/MCP Support Integration/)).toBeInTheDocument();
+    expect(screen.getByText(/^MCP/)).toBeInTheDocument();
   });
 
   it("redacts sensitive-looking argument keys", () => {

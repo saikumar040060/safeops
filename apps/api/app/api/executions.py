@@ -9,7 +9,14 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.rate_limit import rate_limit
 from app.core.security import require_permission
-from app.models import AuditEvent, Execution, ExecutionStep, Operator, RiskAssessment
+from app.models import (
+    AuditEvent,
+    Execution,
+    ExecutionStep,
+    ExternalActionRequest,
+    Operator,
+    RiskAssessment,
+)
 from app.models.enums import ExecutionStatus, StepType
 from app.schemas.execution import (
     ExecutionRead,
@@ -114,7 +121,34 @@ def get_execution_timeline(
             .order_by(AuditEvent.sequence)
         )
     )
-    return ExecutionTimeline(execution=execution, steps=steps, audit_events=audit_events)
+
+    # Milestone 11: decorate each step with where it came from, purely for
+    # display -- this is a read-side join, not a new column/migration, and
+    # never changes authorization or execution behavior.
+    external_by_tool_request: dict[uuid.UUID, tuple[str, str]] = {}
+    for ext, operator in db.execute(
+        select(ExternalActionRequest, Operator)
+        .join(Operator, Operator.id == ExternalActionRequest.operator_id)
+        .where(
+            ExternalActionRequest.execution_id == execution_id,
+            ExternalActionRequest.tool_request_id.is_not(None),
+        )
+    ).all():
+        source = "external_mcp" if ext.integration_type == "MCP" else "external_generic"
+        external_by_tool_request[ext.tool_request_id] = (
+            source,
+            operator.display_name or operator.username,
+        )
+
+    step_reads = []
+    for step in steps:
+        read = ExecutionStepRead.model_validate(step)
+        if step.tool_request_id in external_by_tool_request:
+            source, integration_name = external_by_tool_request[step.tool_request_id]
+            read = read.model_copy(update={"source": source, "integration_name": integration_name})
+        step_reads.append(read)
+
+    return ExecutionTimeline(execution=execution, steps=step_reads, audit_events=audit_events)
 
 
 def _to_summaries(db: Session, executions: list[Execution]) -> list[ExecutionSummary]:

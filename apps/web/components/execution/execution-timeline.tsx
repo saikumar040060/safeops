@@ -62,6 +62,16 @@ export function ExecutionTimelineView({ steps }: { steps: ExecutionStep[] }) {
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-sm font-medium">{stepTitle(step)}</span>
                   <Badge variant="secondary">seq {step.sequence}</Badge>
+                  {step.source !== "internal" && (
+                    <Badge
+                      variant="outline"
+                      className="border-sky-500/30 text-sky-600 dark:text-sky-400"
+                      title={step.integration_name ?? undefined}
+                    >
+                      {step.source === "external_mcp" ? "MCP" : "External API"}
+                      {step.integration_name ? ` · ${step.integration_name}` : ""}
+                    </Badge>
+                  )}
                 </div>
                 <span className="text-xs text-muted-foreground">
                   {format(new Date(step.completed_at ?? step.created_at), "HH:mm:ss")}

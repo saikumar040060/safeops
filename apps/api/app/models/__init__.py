@@ -6,6 +6,8 @@ from app.models.customer import Customer
 from app.models.deployment import Deployment
 from app.models.execution import Execution
 from app.models.execution_step import ExecutionStep
+from app.models.external_action_request import ExternalActionRequest
+from app.models.integration_agent_mapping import IntegrationAgentMapping
 from app.models.operator import Operator
 from app.models.operator_token import OperatorToken
 from app.models.payment import Payment
@@ -29,6 +31,8 @@ __all__ = [
     "Deployment",
     "Execution",
     "ExecutionStep",
+    "ExternalActionRequest",
+    "IntegrationAgentMapping",
     "Operator",
     "OperatorToken",
     "Payment",

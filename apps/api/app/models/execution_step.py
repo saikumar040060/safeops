@@ -32,7 +32,5 @@ class ExecutionStep(Base):
     )
     input: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     output: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

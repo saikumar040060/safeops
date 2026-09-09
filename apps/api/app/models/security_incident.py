@@ -15,9 +15,7 @@ class SecurityIncident(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     execution_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("executions.id"), index=True)
     agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id"), index=True)
-    tool_request_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tool_requests.id"), index=True
-    )
+    tool_request_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tool_requests.id"), index=True)
     risk_assessment_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("risk_assessments.id"), index=True
     )
@@ -35,7 +33,5 @@ class SecurityIncident(Base):
         default=IncidentStatus.OPEN,
         index=True,
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

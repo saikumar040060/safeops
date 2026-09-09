@@ -17,9 +17,7 @@ class PolicyDecision(Base):
     execution_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("executions.id"), index=True)
     agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id"), index=True)
     tool_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tools.id"), index=True)
-    tool_request_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tool_requests.id"), index=True
-    )
+    tool_request_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tool_requests.id"), index=True)
     decision: Mapped[PolicyAction] = mapped_column(
         Enum(PolicyAction, native_enum=False, length=32, create_constraint=True), index=True
     )
@@ -29,6 +27,4 @@ class PolicyDecision(Base):
     matched_policy_key: Mapped[str | None] = mapped_column(String(255), default=None)
     reason: Mapped[str] = mapped_column(String(2000))
     evaluated_context: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

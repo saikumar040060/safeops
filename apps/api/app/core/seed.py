@@ -11,6 +11,7 @@ from app.models import (
     AgentToolPermission,
     Customer,
     Deployment,
+    IntegrationAgentMapping,
     Operator,
     Payment,
     Policy,
@@ -27,6 +28,7 @@ from app.models.enums import (
     PaymentStatus,
     PermissionType,
     PolicyAction,
+    PrincipalType,
     RiskLevel,
 )
 
@@ -59,6 +61,21 @@ SEED_DEMO_OPERATORS = [
         "display_name": "Admin (Demo)",
         "role": OperatorRole.ADMIN,
         "token": "sfops_demo_admin_allaccess",
+    },
+]
+
+# Milestone 11: one demo INTEGRATION principal, mapped only to
+# support-agent -- deliberately never devops-agent, so the cross-agent
+# impersonation demo/test (claiming safeops_agent_id=devops-agent) has a
+# real, seeded principal to exercise against. "approvals:approve" is
+# never in this list, by design -- see app/core/security.py.
+SEED_DEMO_INTEGRATIONS = [
+    {
+        "username": "mcp-support-demo",
+        "display_name": "MCP Support Integration (Demo)",
+        "token": "sfops_demo_integration_support",
+        "scopes": ["actions:submit", "actions:read", "executions:read"],
+        "mapped_agent": "support-agent",
     },
 ]
 
@@ -455,6 +472,17 @@ def seed(db: Session) -> None:
 
     if get_settings().demo_mode:
         _seed_demo_operators(db)
+        _seed_demo_integrations(db)
+
+
+def _issue_demo_token_if_new(operator: Operator, raw_token: str, db: Session) -> None:
+    # Re-issuing on every seed run keeps the well-known demo token valid
+    # even if a previous run's token row was ever revoked or dropped --
+    # seed() must always leave the demo environment in a usable state.
+    existing_token_hashes = {t.token_hash for t in operator.tokens}
+    token, _ = issue_token(operator, raw_token=raw_token)
+    if token.token_hash not in existing_token_hashes:
+        db.add(token)
 
 
 def _seed_demo_operators(db: Session) -> None:
@@ -466,13 +494,36 @@ def _seed_demo_operators(db: Session) -> None:
             )
             db.add(operator)
             db.flush()
-        # Re-issuing on every seed run keeps the well-known demo token valid
-        # even if a previous run's token row was ever revoked or dropped --
-        # seed() must always leave the demo environment in a usable state.
-        existing_token_hashes = {t.token_hash for t in operator.tokens}
-        token, raw = issue_token(operator, raw_token=data["token"])
-        if token.token_hash not in existing_token_hashes:
-            db.add(token)
+        _issue_demo_token_if_new(operator, data["token"], db)
+    db.commit()
+
+
+def _seed_demo_integrations(db: Session) -> None:
+    for data in SEED_DEMO_INTEGRATIONS:
+        operator = db.query(Operator).filter_by(username=data["username"]).one_or_none()
+        if operator is None:
+            operator = Operator(
+                username=data["username"],
+                display_name=data["display_name"],
+                role=OperatorRole.VIEWER,
+                principal_type=PrincipalType.INTEGRATION,
+                integration_scopes=data["scopes"],
+            )
+            db.add(operator)
+            db.flush()
+        else:
+            operator.principal_type = PrincipalType.INTEGRATION
+            operator.integration_scopes = data["scopes"]
+        _issue_demo_token_if_new(operator, data["token"], db)
+
+        agent = db.query(Agent).filter_by(name=data["mapped_agent"]).one()
+        mapping = (
+            db.query(IntegrationAgentMapping)
+            .filter_by(operator_id=operator.id, agent_id=agent.id)
+            .one_or_none()
+        )
+        if mapping is None:
+            db.add(IntegrationAgentMapping(operator_id=operator.id, agent_id=agent.id))
     db.commit()
 
 
@@ -487,6 +538,9 @@ def main() -> None:
         print("\nDemo operator tokens (SAFEOPS_DEMO_MODE=true only):")
         for data in SEED_DEMO_OPERATORS:
             print(f"  {data['role'].value:<9} {data['username']:<15} {data['token']}")
+        print("\nDemo integration tokens (SAFEOPS_DEMO_MODE=true only):")
+        for data in SEED_DEMO_INTEGRATIONS:
+            print(f"  INTEGRATION {data['username']:<20} {data['token']} -> {data['mapped_agent']}")
 
 
 if __name__ == "__main__":

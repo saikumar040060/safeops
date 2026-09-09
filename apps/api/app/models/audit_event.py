@@ -27,8 +27,6 @@ class AuditEvent(Base):
     )
     actor: Mapped[str] = mapped_column(String(255))
     event_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     execution: Mapped["Execution"] = relationship(back_populates="audit_events")

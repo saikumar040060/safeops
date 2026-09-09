@@ -87,8 +87,7 @@ def test_seed_permissions_match_expected_matrix(db_session):
         for permission in db_session.query(AgentToolPermission).all()
     }
     expected = {
-        (row["agent_name"], row["tool_name"]): row["permission"]
-        for row in SEED_PERMISSIONS
+        (row["agent_name"], row["tool_name"]): row["permission"] for row in SEED_PERMISSIONS
     }
 
     assert len(SEED_PERMISSIONS) == 20

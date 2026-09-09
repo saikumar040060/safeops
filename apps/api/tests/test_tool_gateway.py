@@ -394,9 +394,7 @@ def test_devops_agent_deploy_production_requires_approval_and_does_not_execute(s
     assert result.decision == "REQUIRE_APPROVAL"
     assert result.matched_policy == "DEVOPS_PRODUCTION_DEPLOY"
 
-    versions = {
-        d.version for d in seeded_db.query(Deployment).filter_by(service_id=service.id)
-    }
+    versions = {d.version for d in seeded_db.query(Deployment).filter_by(service_id=service.id)}
     assert "9.9.9-conditional" not in versions
 
     request = seeded_db.query(ToolRequest).filter_by(execution_id=execution.id).one()
@@ -427,9 +425,7 @@ def test_conditional_with_no_matching_policy_fails_closed(seeded_db):
     # configured for this agent/tool to exercise the fail-closed path.
     tool = seeded_db.query(Tool).filter_by(name="get_payments").one()
     permission = (
-        seeded_db.query(AgentToolPermission)
-        .filter_by(agent_id=agent.id, tool_id=tool.id)
-        .one()
+        seeded_db.query(AgentToolPermission).filter_by(agent_id=agent.id, tool_id=tool.id).one()
     )
     permission.permission = PermissionType.CONDITIONAL
     seeded_db.commit()
@@ -503,9 +499,7 @@ def test_malformed_policy_reason_does_not_leak_condition_data(seeded_db):
     assert secret not in decision.reason
 
 
-def test_unexpected_policy_exception_fails_closed_without_leaking(
-    seeded_db, monkeypatch
-):
+def test_unexpected_policy_exception_fails_closed_without_leaking(seeded_db, monkeypatch):
     agent = _agent(seeded_db, "devops-agent")
     execution = _make_execution(seeded_db, agent)
     secret = "sensitive evaluator internals"
@@ -554,9 +548,7 @@ def test_no_tool_execution_when_denied(seeded_db):
     )
 
     assert result.status == "BLOCKED"
-    versions = {
-        d.version for d in seeded_db.query(Deployment).filter_by(service_id=service.id)
-    }
+    versions = {d.version for d in seeded_db.query(Deployment).filter_by(service_id=service.id)}
     assert "9.9.9-denied" not in versions
 
     event_types = [e.event_type.value for e in _events(seeded_db, execution.id)]

@@ -17,9 +17,7 @@ class Service(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     deployments: Mapped[list["Deployment"]] = relationship(back_populates="service")
     logs: Mapped[list["ServiceLog"]] = relationship(back_populates="service")

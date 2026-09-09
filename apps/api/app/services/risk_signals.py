@@ -179,9 +179,7 @@ def detect_unusual_tool_sequence(inp: DetectionInput) -> SignalMatch | None:
         .limit(1)
     )
     if prior_read is not None:
-        return SignalMatch(
-            "UNUSUAL_TOOL_SEQUENCE", "READ_THEN_EXPORT_SEQUENCE", inp.tool_name
-        )
+        return SignalMatch("UNUSUAL_TOOL_SEQUENCE", "READ_THEN_EXPORT_SEQUENCE", inp.tool_name)
     return None
 
 

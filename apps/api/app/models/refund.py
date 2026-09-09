@@ -20,8 +20,6 @@ class Refund(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     reason: Mapped[str] = mapped_column(String(2000))
     idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     payment: Mapped["Payment"] = relationship(back_populates="refunds")

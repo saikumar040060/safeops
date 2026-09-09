@@ -17,6 +17,4 @@ class SupportTicket(Base):
     )
     subject: Mapped[str] = mapped_column(String(500))
     body: Mapped[str] = mapped_column(String(8000))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

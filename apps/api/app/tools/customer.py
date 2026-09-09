@@ -104,9 +104,7 @@ class GetSupportTicketTool(BaseTool):
     output_schema = GetSupportTicketOutput
 
     def _run(self, input: GetSupportTicketInput, db: Session) -> GetSupportTicketOutput:
-        ticket = db.scalar(
-            select(SupportTicket).where(SupportTicket.ticket_id == input.ticket_id)
-        )
+        ticket = db.scalar(select(SupportTicket).where(SupportTicket.ticket_id == input.ticket_id))
         if ticket is None:
             raise ToolExecutionError("NOT_FOUND", f"Support ticket '{input.ticket_id}' not found")
 

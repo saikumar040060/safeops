@@ -81,7 +81,7 @@ from app.models.enums import (
     ToolRequestStatus,
 )
 from app.services.audit import commit_chunk
-from app.services.planner import Complete, DeterministicPlanner, Fail, Planner, ToolAction
+from app.services.planner import Complete, DeterministicPlanner, Fail, Planner, Source, ToolAction
 from app.services.tool_gateway import ToolGateway
 
 READ_ONLY_TOOLS = {
@@ -371,51 +371,226 @@ class AgentRuntime:
         )
         return RuntimeResult(status="CANCELLED", execution_status=execution.status.value)
 
+    def submit_external_action(
+        self,
+        *,
+        execution_id: uuid.UUID,
+        tool_name: str,
+        arguments: dict[str, Any],
+        reason: str,
+        sources: list[Source],
+        db: Session,
+    ) -> RuntimeResult:
+        """Milestone 11: the external-agent equivalent of a single
+        planner-proposed ToolAction, minus the planner -- an external
+        caller already decided which tool to call (that is the entire
+        point of an external integration), so this skips
+        DeterministicPlanner entirely and goes straight to claiming a step
+        and invoking ToolGateway via the exact same `_run_tool_call_step`
+        path `step()`/`resume()` use for a planner-driven ToolAction.
+
+        This is the ONLY method ExternalActionService (or any adapter
+        built on it) may call to cause a side effect -- there is no other
+        entry point into ToolGateway reachable from outside this class,
+        and this method itself never touches a tool implementation
+        directly, only `self.gateway.execute(...)` via
+        `_run_tool_call_step`.
+
+        Protected by the same stepping lease and MAX_EXECUTION_STEPS bound
+        as step()/resume(): an external submission racing an internal
+        step()/resume() call, or another external submission, on the same
+        execution is exactly as safe as two internal callers racing.
+        """
+        execution = db.get(Execution, execution_id)
+        if execution is None:
+            return RuntimeResult(
+                status="NOT_FOUND", execution_status="UNKNOWN", reason="Execution not found"
+            )
+        if execution.status != ExecutionStatus.RUNNING:
+            return RuntimeResult(
+                status="NOOP",
+                execution_status=execution.status.value,
+                reason=f"Execution is {execution.status.value}, cannot accept action",
+            )
+
+        claim_id = self._claim_stepping(db, execution)
+        if claim_id is None:
+            return self._conflict_result(execution)
+        try:
+            if execution.status != ExecutionStatus.RUNNING:
+                return RuntimeResult(
+                    status="NOOP",
+                    execution_status=execution.status.value,
+                    reason=f"Execution is {execution.status.value}, cannot accept action",
+                )
+
+            history = self._load_history(db, execution.id)
+            max_steps_result = self._fail_max_steps_exceeded(db, execution, history)
+            if max_steps_result is not None:
+                return max_steps_result
+
+            action = ToolAction(
+                tool_name=tool_name, arguments=arguments, reason=reason, sources=sources
+            )
+            step_input = {
+                "tool_name": action.tool_name,
+                "arguments": _json_safe(action.arguments),
+                "reason": action.reason,
+                "sources": [s.model_dump() for s in action.sources],
+            }
+            step = self._claim_step(db, execution.id, StepType.TOOL_CALL, step_input)
+            if step is None:
+                return self._conflict_result(execution)
+
+            commit_chunk(
+                db,
+                execution.id,
+                lambda seq: [
+                    AuditEvent(
+                        execution_id=execution.id,
+                        sequence=seq,
+                        event_type=AuditEventType.EXECUTION_STEP_STARTED,
+                        actor="agent-runtime",
+                        event_metadata={
+                            "step_sequence": step.sequence,
+                            "tool_name": action.tool_name,
+                        },
+                    )
+                ],
+            )
+
+            return self._run_tool_call_step(db, execution, step, action, allow_retry=True)
+        finally:
+            self._release_stepping(db, execution_id, claim_id)
+
+    def reconcile_external_step(self, execution_id: uuid.UUID, db: Session) -> RuntimeResult:
+        """Milestone 11: finalizes an external action's ExecutionStep after
+        a human resolves the approval it triggered -- WITHOUT calling
+        `_advance()` afterward the way `resume()` does. This is
+        deliberate: `resume()`'s post-reconciliation `_advance()` call
+        hands off to DeterministicPlanner for a "next step", but an
+        external-agent-driven execution has no planner-owned next step to
+        take (the external caller decides what happens next, if anything,
+        via its own subsequent submit_external_action call) -- calling
+        `_advance()` here would incorrectly try to plan one anyway and
+        likely fail the execution with UNSUPPORTED_OBJECTIVE right after
+        the legitimate external action already completed successfully.
+
+        Reuses `_resolve_pending_step` alone, under the same stepping
+        lease, so this is exactly as safe as `resume()`'s own
+        reconciliation and cannot race it.
+        """
+        execution = db.get(Execution, execution_id)
+        if execution is None:
+            return RuntimeResult(
+                status="NOT_FOUND", execution_status="UNKNOWN", reason="Execution not found"
+            )
+        if execution.status not in (ExecutionStatus.RUNNING, ExecutionStatus.WAITING_APPROVAL):
+            return RuntimeResult(
+                status="NOOP",
+                execution_status=execution.status.value,
+                reason=f"Execution is {execution.status.value}, nothing to reconcile",
+            )
+
+        claim_id = self._claim_stepping(db, execution)
+        if claim_id is None:
+            return self._conflict_result(execution)
+        try:
+            pending_step = db.scalar(
+                select(ExecutionStep)
+                .where(
+                    ExecutionStep.execution_id == execution.id,
+                    ExecutionStep.status == StepStatus.WAITING_APPROVAL,
+                )
+                .order_by(ExecutionStep.sequence.desc())
+                .limit(1)
+            )
+            if pending_step is None:
+                return RuntimeResult(
+                    status="NOOP",
+                    execution_status=execution.status.value,
+                    reason="No pending approval step to reconcile",
+                )
+
+            outcome = self._resolve_pending_step(db, execution, pending_step)
+            if outcome.status != "NOOP":
+                commit_chunk(
+                    db,
+                    execution.id,
+                    lambda seq: [
+                        AuditEvent(
+                            execution_id=execution.id,
+                            sequence=seq,
+                            event_type=AuditEventType.EXECUTION_RESUMED,
+                            actor="agent-runtime",
+                            event_metadata={"step_sequence": pending_step.sequence},
+                        )
+                    ],
+                )
+
+            return RuntimeResult(
+                status=outcome.status,
+                execution_status=execution.status.value,
+                reason=outcome.reason,
+                step_sequence=pending_step.sequence,
+            )
+        finally:
+            self._release_stepping(db, execution_id, claim_id)
+
     # ------------------------------------------------------------------
     # Internal: the shared step-claiming/advancing core
     # ------------------------------------------------------------------
 
+    def _fail_max_steps_exceeded(
+        self, db: Session, execution: Execution, history: list[ExecutionStep]
+    ) -> RuntimeResult | None:
+        """Bounded regardless of caller: a buggy/non-converging planner, or
+        an external agent hammering the same execution, must not be able
+        to spin it forever. Checked before the planner (or, for an
+        external action, before ToolGateway) is even called -- an
+        execution that already has MAX_EXECUTION_STEPS steps fails closed
+        without producing one more. Returns None if under the limit."""
+        if len(history) < MAX_EXECUTION_STEPS:
+            return None
+
+        step = self._claim_step(
+            db,
+            execution.id,
+            StepType.FINAL,
+            {
+                "decision": "FAIL",
+                "reason": "Execution exceeded MAX_EXECUTION_STEPS",
+                "code": "MAX_STEPS_EXCEEDED",
+            },
+        )
+        if step is None:
+            return self._conflict_result(execution)
+        self._finalize(
+            db,
+            execution,
+            step,
+            StepStatus.FAILED,
+            {"reason": "Execution exceeded MAX_EXECUTION_STEPS", "code": "MAX_STEPS_EXCEEDED"},
+            AuditEventType.EXECUTION_FAILED,
+            {
+                "step_sequence": step.sequence,
+                "reason": "Execution exceeded MAX_EXECUTION_STEPS",
+                "code": "MAX_STEPS_EXCEEDED",
+            },
+            terminal_status=ExecutionStatus.FAILED,
+        )
+        return RuntimeResult(
+            status="FAILED",
+            execution_status=execution.status.value,
+            reason="Execution exceeded MAX_EXECUTION_STEPS",
+            step_sequence=step.sequence,
+        )
+
     def _advance(self, db: Session, execution: Execution) -> RuntimeResult:
         history = self._load_history(db, execution.id)
-
-        # Bounded regardless of planner behavior: a buggy or non-converging
-        # planner must not be able to spin an execution forever. Checked
-        # before the planner is even called -- an execution that already
-        # has MAX_EXECUTION_STEPS steps fails closed without producing one
-        # more.
-        if len(history) >= MAX_EXECUTION_STEPS:
-            step = self._claim_step(
-                db,
-                execution.id,
-                StepType.FINAL,
-                {
-                    "decision": "FAIL",
-                    "reason": "Execution exceeded MAX_EXECUTION_STEPS",
-                    "code": "MAX_STEPS_EXCEEDED",
-                },
-            )
-            if step is None:
-                return self._conflict_result(execution)
-            self._finalize(
-                db,
-                execution,
-                step,
-                StepStatus.FAILED,
-                {"reason": "Execution exceeded MAX_EXECUTION_STEPS", "code": "MAX_STEPS_EXCEEDED"},
-                AuditEventType.EXECUTION_FAILED,
-                {
-                    "step_sequence": step.sequence,
-                    "reason": "Execution exceeded MAX_EXECUTION_STEPS",
-                    "code": "MAX_STEPS_EXCEEDED",
-                },
-                terminal_status=ExecutionStatus.FAILED,
-            )
-            return RuntimeResult(
-                status="FAILED",
-                execution_status=execution.status.value,
-                reason="Execution exceeded MAX_EXECUTION_STEPS",
-                step_sequence=step.sequence,
-            )
+        max_steps_result = self._fail_max_steps_exceeded(db, execution, history)
+        if max_steps_result is not None:
+            return max_steps_result
 
         context = {"objective": execution.objective, "initial_context": execution.initial_context}
 

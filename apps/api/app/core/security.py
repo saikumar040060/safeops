@@ -25,8 +25,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.core.database import get_db
+from app.core.metrics import increment_counter
 from app.models import Operator, OperatorToken
-from app.models.enums import OperatorRole
+from app.models.enums import OperatorRole, PrincipalType
 
 TOKEN_PREFIX = "sfops_"
 
@@ -38,6 +39,22 @@ ROLE_PERMISSIONS: dict[OperatorRole, set[str]] = {
     OperatorRole.OPERATOR: {"read", "execute"},
     OperatorRole.APPROVER: {"read", "approve"},
     OperatorRole.ADMIN: {"read", "execute", "approve"},
+}
+
+# Milestone 11: integration (machine) principals are authorized by an
+# explicit scope list on the Operator row, never by `role` -- a completely
+# separate dimension from ROLE_PERMISSIONS above, checked by a completely
+# separate dependency (require_scope, not require_permission). This is
+# deliberate: "approvals:approve" is never issued to any integration by
+# this codebase, so even a maximally over-provisioned integration
+# principal cannot approve its own escalated action -- that capability
+# only exists on the OPERATOR/role side of the auth model.
+INTEGRATION_SCOPES = {
+    "actions:submit",
+    "actions:read",
+    "executions:read",
+    "executions:create",
+    "incidents:read",
 }
 
 
@@ -109,6 +126,39 @@ def require_permission(permission: str):
                 detail={
                     "code": "FORBIDDEN",
                     "message": "Your role does not permit this action.",
+                },
+            )
+        return operator
+
+    return _dependency
+
+
+def require_scope(scope: str):
+    """FastAPI dependency factory for INTEGRATION-type principals. Fails
+    closed for anything that isn't exactly an active INTEGRATION operator
+    holding `scope` in its own `integration_scopes` list -- an OPERATOR
+    (human) principal, however privileged its role, never has any
+    integration_scopes and so always fails this check too. The two
+    authorization dimensions (role vs. scope) never cross.
+    """
+
+    def _dependency(operator: Operator = Depends(get_current_operator)) -> Operator:
+        if operator.principal_type != PrincipalType.INTEGRATION:
+            increment_counter("integration_auth_failures_total")
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "INSUFFICIENT_SCOPE",
+                    "message": "This endpoint requires an integration principal.",
+                },
+            )
+        if scope not in (operator.integration_scopes or []):
+            increment_counter("integration_auth_failures_total")
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "INSUFFICIENT_SCOPE",
+                    "message": f"Integration is missing required scope: {scope}.",
                 },
             )
         return operator

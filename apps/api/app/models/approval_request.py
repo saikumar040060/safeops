@@ -20,9 +20,7 @@ class ApprovalRequest(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     execution_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("executions.id"), index=True)
     agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id"), index=True)
-    tool_request_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tool_requests.id"), index=True
-    )
+    tool_request_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tool_requests.id"), index=True)
     policy_decision_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("policy_decisions.id"), index=True
     )

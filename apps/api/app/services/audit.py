@@ -18,9 +18,7 @@ def commit_chunk(
     for attempt in range(5):
         base_seq = (
             db.scalar(
-                select(func.max(AuditEvent.sequence)).where(
-                    AuditEvent.execution_id == execution_id
-                )
+                select(func.max(AuditEvent.sequence)).where(AuditEvent.execution_id == execution_id)
             )
             or 0
         ) + 1

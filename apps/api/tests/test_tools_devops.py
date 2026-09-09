@@ -19,9 +19,7 @@ def test_read_logs_returns_seeded_entries(seeded_db):
 
 
 def test_read_logs_unknown_service(seeded_db):
-    result = tool_registry.get("read_logs").execute(
-        {"service_name": "does-not-exist"}, seeded_db
-    )
+    result = tool_registry.get("read_logs").execute({"service_name": "does-not-exist"}, seeded_db)
 
     assert result.success is False
     assert result.error.code == "NOT_FOUND"
