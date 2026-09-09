@@ -10,33 +10,67 @@ returns is ever eval'd, imported, or dispatched dynamically -- a ToolAction
 is just data that gets forwarded to ToolGateway.execute(), which does its
 own independent validation of the tool name and arguments.
 
-Concurrency: step() and resume() each open by atomically claiming
-Execution.stepping (an ordinary `UPDATE ... WHERE stepping = false`,
-committed immediately) before doing any planning or calling the gateway,
-and release it in a `finally` once the whole plan-execute-finalize
-critical section is done. A losing concurrent caller sees the claim
-UPDATE match zero rows and returns CONFLICT immediately -- it never
-calls the planner or ToolGateway. This claim is plain transactional row
-data rather than a Postgres session-level advisory lock deliberately:
-SQLAlchemy sessions do not pin one physical connection across the many
-small commits this section makes internally, so a lock acquired on one
-pooled connection could end up "released" on a different one and never
-actually clear. Forward progress is additionally recorded via an INSERT
-into execution_steps under a UNIQUE(execution_id, sequence) constraint,
-the same pattern audit_events uses.
+Concurrency: step() and resume() each open by atomically claiming a
+TTL'd lease on the execution (`stepping` + `stepping_claim_id` +
+`stepping_claimed_at`, an ordinary `UPDATE ... WHERE stepping = false OR
+stepping_claimed_at < now() - LEASE_TTL`, committed immediately) before
+doing any planning or calling the gateway, and release it in a `finally`
+once the whole plan-execute-finalize critical section is done. A losing
+concurrent caller sees the claim UPDATE match zero rows and returns
+CONFLICT immediately -- it never calls the planner or ToolGateway. This
+claim is plain transactional row data rather than a Postgres session-level
+advisory lock deliberately: SQLAlchemy sessions do not pin one physical
+connection across the many small commits this section makes internally,
+so a lock acquired on one pooled connection could end up "released" on a
+different one and never actually clear.
+
+Lease safety model (why a stale-lease recovery can never race unsafely,
+and never causes a duplicate side effect):
+
+- The claim UPDATE's WHERE clause is `stepping = false OR
+  stepping_claimed_at < now() - LEASE_TTL`. Postgres serializes concurrent
+  UPDATEs to the same row: only the first one to commit actually changes
+  the row (to a fresh `stepping_claim_id` + `stepping_claimed_at = now()`);
+  every other concurrent UPDATE -- including other stale-recovery
+  attempts racing the same stale lease -- re-evaluates its WHERE clause
+  against the post-commit row and no longer matches (the lease is no
+  longer stale), so it affects zero rows and the caller gets CONFLICT.
+  This is the same CAS pattern the old plain-boolean claim already used;
+  only the WHERE clause grew an OR branch for staleness.
+- Release only clears the lease if `stepping_claim_id` still matches the
+  claim that opened it (`UPDATE ... WHERE stepping_claim_id = :mine`).
+  This stops a zombie process -- one whose lease already went stale and
+  was recovered by someone else -- from waking up later and clearing a
+  *different*, currently-active claim out from under its legitimate
+  holder.
+- A stale-lease recovery re-enters `_advance()`, which re-derives the
+  next action purely from persisted `ExecutionStep` history
+  (`_load_history`); if the crashed holder never got as far as a tool
+  call, recovery is indistinguishable from an ordinary fresh step(). If
+  the crashed holder's tool call *did* fire before it died, safety then
+  depends on that tool being idempotent -- refund_payment already is
+  (unique `idempotency_key`); deploy_staging/deploy_production are made
+  idempotent the same way (see tools/devops.py), so a recovered step that
+  re-executes a tool call whose side effect already landed replays the
+  existing result instead of creating a duplicate.
+
+Forward progress is additionally recorded via an INSERT into
+execution_steps under a UNIQUE(execution_id, sequence) constraint, the
+same pattern audit_events uses.
 """
 
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import Agent, ApprovalRequest, AuditEvent, Execution, ExecutionStep, ToolRequest
 from app.models.enums import (
     ApprovalStatus,
@@ -57,6 +91,17 @@ READ_ONLY_TOOLS = {
     "read_logs",
     "get_deployment",
 }
+
+# Execution steps bounded per Milestone 10: a planner bug or a workflow that
+# never converges must not spin forever. Configurable via
+# MAX_EXECUTION_STEPS; the deterministic demo planner never comes close to
+# this in normal operation (every workflow finishes in <=4 steps).
+MAX_EXECUTION_STEPS = get_settings().max_execution_steps
+
+# How long a stepping claim is honored before a new caller may treat it as
+# abandoned (crashed holder) and safely recover it. See the module
+# docstring's "Lease safety model" for the full argument.
+LEASE_TTL = timedelta(seconds=get_settings().stepping_lease_ttl_seconds)
 
 TERMINAL_EXECUTION_STATUSES = {
     ExecutionStatus.COMPLETED,
@@ -160,7 +205,8 @@ class AgentRuntime:
                 reason=f"Execution is {execution.status.value}, cannot step",
             )
 
-        if not self._claim_stepping(db, execution):
+        claim_id = self._claim_stepping(db, execution)
+        if claim_id is None:
             return self._conflict_result(execution)
         try:
             if execution.status != ExecutionStatus.RUNNING:
@@ -171,7 +217,7 @@ class AgentRuntime:
                 )
             return self._advance(db, execution)
         finally:
-            self._release_stepping(db, execution_id)
+            self._release_stepping(db, execution_id, claim_id)
 
     def resume(self, execution_id: uuid.UUID, db: Session) -> RuntimeResult:
         execution = db.get(Execution, execution_id)
@@ -192,7 +238,8 @@ class AgentRuntime:
                 reason=f"Execution is {execution.status.value}, cannot resume",
             )
 
-        if not self._claim_stepping(db, execution):
+        claim_id = self._claim_stepping(db, execution)
+        if claim_id is None:
             return self._conflict_result(execution)
         try:
             if execution.status != ExecutionStatus.RUNNING:
@@ -244,26 +291,42 @@ class AgentRuntime:
 
             return self._advance(db, execution)
         finally:
-            self._release_stepping(db, execution_id)
+            self._release_stepping(db, execution_id, claim_id)
 
     @staticmethod
-    def _claim_stepping(db: Session, execution: Execution) -> bool:
+    def _claim_stepping(db: Session, execution: Execution) -> uuid.UUID | None:
+        """Attempts to claim the stepping lease. Returns the new claim id on
+        success, or None if someone else holds a still-fresh lease. See the
+        module docstring's "Lease safety model" for the full argument."""
+        claim_id = uuid.uuid4()
+        now = datetime.now(UTC)
         claimed = (
             db.execute(
                 update(Execution)
-                .where(Execution.id == execution.id, Execution.stepping.is_(False))
-                .values(stepping=True)
+                .where(
+                    Execution.id == execution.id,
+                    or_(
+                        Execution.stepping.is_(False),
+                        Execution.stepping_claimed_at < now - LEASE_TTL,
+                    ),
+                )
+                .values(stepping=True, stepping_claim_id=claim_id, stepping_claimed_at=now)
             ).rowcount
             > 0
         )
         db.commit()
         db.refresh(execution)
-        return claimed
+        return claim_id if claimed else None
 
     @staticmethod
-    def _release_stepping(db: Session, execution_id: uuid.UUID) -> None:
+    def _release_stepping(db: Session, execution_id: uuid.UUID, claim_id: uuid.UUID) -> None:
+        # Only clears the lease if it still belongs to this claim -- a
+        # zombie holder whose lease already went stale and was recovered by
+        # someone else must not be able to clear the new, active claim.
         db.execute(
-            update(Execution).where(Execution.id == execution_id).values(stepping=False)
+            update(Execution)
+            .where(Execution.id == execution_id, Execution.stepping_claim_id == claim_id)
+            .values(stepping=False, stepping_claim_id=None, stepping_claimed_at=None)
         )
         db.commit()
 
@@ -314,6 +377,46 @@ class AgentRuntime:
 
     def _advance(self, db: Session, execution: Execution) -> RuntimeResult:
         history = self._load_history(db, execution.id)
+
+        # Bounded regardless of planner behavior: a buggy or non-converging
+        # planner must not be able to spin an execution forever. Checked
+        # before the planner is even called -- an execution that already
+        # has MAX_EXECUTION_STEPS steps fails closed without producing one
+        # more.
+        if len(history) >= MAX_EXECUTION_STEPS:
+            step = self._claim_step(
+                db,
+                execution.id,
+                StepType.FINAL,
+                {
+                    "decision": "FAIL",
+                    "reason": "Execution exceeded MAX_EXECUTION_STEPS",
+                    "code": "MAX_STEPS_EXCEEDED",
+                },
+            )
+            if step is None:
+                return self._conflict_result(execution)
+            self._finalize(
+                db,
+                execution,
+                step,
+                StepStatus.FAILED,
+                {"reason": "Execution exceeded MAX_EXECUTION_STEPS", "code": "MAX_STEPS_EXCEEDED"},
+                AuditEventType.EXECUTION_FAILED,
+                {
+                    "step_sequence": step.sequence,
+                    "reason": "Execution exceeded MAX_EXECUTION_STEPS",
+                    "code": "MAX_STEPS_EXCEEDED",
+                },
+                terminal_status=ExecutionStatus.FAILED,
+            )
+            return RuntimeResult(
+                status="FAILED",
+                execution_status=execution.status.value,
+                reason="Execution exceeded MAX_EXECUTION_STEPS",
+                step_sequence=step.sequence,
+            )
+
         context = {"objective": execution.objective, "initial_context": execution.initial_context}
 
         try:
@@ -629,7 +732,8 @@ class AgentRuntime:
         # (a narrow window between its own CAS and tool execution). Fail
         # closed: nothing to resume from until that finishes.
         return _ResolvedApprovalOutcome(
-            status="NOOP", reason="Approval approved but not finished executing yet",
+            status="NOOP",
+            reason="Approval approved but not finished executing yet",
             should_continue=False,
         )
 
@@ -729,6 +833,8 @@ class AgentRuntime:
             if tool_request_id is not None:
                 step.tool_request_id = tool_request_id
             rows: list[Any] = [step]
+            actual_event_type = event_type
+            actual_event_metadata = event_metadata
             if terminal_status is not None:
                 transitioned = db.execute(
                     update(Execution)
@@ -741,13 +847,29 @@ class AgentRuntime:
                 if transitioned:
                     execution.status = terminal_status
                     execution.completed_at = completed_at
+                else:
+                    # The terminal-status CAS lost: something else (e.g. a
+                    # concurrent cancel()) already moved the execution out
+                    # of RUNNING, so it never actually became
+                    # `terminal_status`. The step itself still genuinely
+                    # reached `status` (recorded above) -- only the
+                    # execution-level audit event must not claim a status
+                    # transition that did not happen. Never rewrite what
+                    # already happened; describe reality instead.
+                    db.refresh(execution)
+                    actual_event_type = AuditEventType.EXECUTION_STATUS_ALREADY_TERMINAL
+                    actual_event_metadata = {
+                        **event_metadata,
+                        "attempted_status": terminal_status.value,
+                        "actual_status": execution.status.value,
+                    }
             rows.append(
                 AuditEvent(
                     execution_id=execution.id,
                     sequence=seq,
-                    event_type=event_type,
+                    event_type=actual_event_type,
                     actor="agent-runtime",
-                    event_metadata=event_metadata,
+                    event_metadata=actual_event_metadata,
                 )
             )
             return rows

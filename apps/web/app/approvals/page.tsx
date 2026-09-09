@@ -20,12 +20,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useApproveApproval, useApprovals, useRejectApproval } from "@/hooks/use-safeops";
+import { hasPermission, useAuth } from "@/lib/auth";
 import type { ApprovalRequest } from "@/lib/types";
-
-const RESOLVER_NAME = "demo-operator";
 
 export default function ApprovalsPage() {
   const { data, isLoading, error } = useApprovals();
+  const { operator } = useAuth();
+  const canApprove = hasPermission(operator?.role, "approve");
   const [pendingAction, setPendingAction] = useState<{
     approval: ApprovalRequest;
     kind: "approve" | "reject";
@@ -47,9 +48,16 @@ export default function ApprovalsPage() {
       {data && (
         <div className="flex flex-col gap-6">
           <section>
-            <h2 className="mb-2 text-sm font-medium text-muted-foreground">
-              Pending ({pending.length})
-            </h2>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-medium text-muted-foreground">
+                Pending ({pending.length})
+              </h2>
+              {!canApprove && pending.length > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  Your role ({operator?.role}) can view but not resolve approvals.
+                </span>
+              )}
+            </div>
             {pending.length === 0 ? (
               <EmptyState title="Nothing pending" description="No actions currently need review." />
             ) : (
@@ -58,8 +66,12 @@ export default function ApprovalsPage() {
                   <ApprovalCard
                     key={approval.id}
                     approval={approval}
-                    onApprove={() => setPendingAction({ approval, kind: "approve" })}
-                    onReject={() => setPendingAction({ approval, kind: "reject" })}
+                    onApprove={
+                      canApprove ? () => setPendingAction({ approval, kind: "approve" }) : undefined
+                    }
+                    onReject={
+                      canApprove ? () => setPendingAction({ approval, kind: "reject" }) : undefined
+                    }
                   />
                 ))}
               </div>
@@ -155,12 +167,11 @@ function ConfirmationDialog({
     const { approval, kind } = pendingAction;
     try {
       if (kind === "approve") {
-        await approveApproval.mutateAsync({ id: approval.id, resolvedBy: RESOLVER_NAME });
+        await approveApproval.mutateAsync({ id: approval.id });
         toast.success(`Approved ${approval.tool_name}. It will execute exactly once.`);
       } else {
         await rejectApproval.mutateAsync({
           id: approval.id,
-          resolvedBy: RESOLVER_NAME,
           reason: "Rejected from Approval Center",
         });
         toast.success(`Rejected ${approval.tool_name}.`);

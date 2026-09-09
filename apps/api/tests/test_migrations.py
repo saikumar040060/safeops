@@ -22,6 +22,7 @@ from app.models.enums import ExecutionStatus
 from app.services.agent_runtime import AgentRuntime
 from app.services.approval_engine import ApprovalEngine
 from app.services.tool_gateway import ToolGateway
+from tests.conftest import make_operator
 
 API_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TABLES = {
@@ -170,8 +171,7 @@ def test_upgrade_from_empty_database(alembic_config, db_engine):
     inspector = inspect(db_engine)
     for table, expected_checks in EXPECTED_CHECKS.items():
         checks = {
-            check["name"]: check["sqltext"]
-            for check in inspector.get_check_constraints(table)
+            check["name"]: check["sqltext"] for check in inspector.get_check_constraints(table)
         }
         assert checks.keys() == expected_checks.keys()
         for name, values in expected_checks.items():
@@ -264,11 +264,13 @@ def test_approval_migration_round_trip_with_resolved_rows(alembic_config, db_eng
             approval_ids.append(uuid.UUID(result.approval_request_id))
 
         approved = approval_engine.approve(
-            approval_id=approval_ids[0], resolved_by="migration-review", db=session
+            approval_id=approval_ids[0],
+            operator=make_operator(session, "migration-review"),
+            db=session,
         )
         rejected = approval_engine.reject(
             approval_id=approval_ids[1],
-            resolved_by="migration-review",
+            operator=make_operator(session, "migration-review"),
             reason="migration rejection",
             db=session,
         )

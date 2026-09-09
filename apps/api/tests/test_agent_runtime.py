@@ -16,12 +16,13 @@ from app.models import (
     SecurityIncident,
     ToolRequest,
 )
-from app.models.enums import ExecutionStatus, StepStatus, ToolRequestStatus
+from app.models.enums import AuditEventType, ExecutionStatus, StepStatus, ToolRequestStatus
 from app.services import agent_runtime as agent_runtime_module
 from app.services import planner as planner_module
 from app.services.agent_runtime import AgentRuntime
 from app.services.approval_engine import ApprovalEngine
 from app.services.planner import ToolAction
+from tests.conftest import make_operator
 
 runtime = AgentRuntime()
 approval_engine = ApprovalEngine()
@@ -102,9 +103,7 @@ def test_agent_runtime_has_no_code_execution_primitives():
 
 def test_start_execution_transitions_created_to_running(seeded_db):
     agent = _agent(seeded_db, "support-agent")
-    result = runtime.start_execution(
-        agent_id=agent.id, objective="test objective", db=seeded_db
-    )
+    result = runtime.start_execution(agent_id=agent.id, objective="test objective", db=seeded_db)
     assert result.status == "CREATED"
     assert result.execution_status == "RUNNING"
 
@@ -198,9 +197,7 @@ def test_unknown_tool_fails_closed(seeded_db):
     execution_id = uuid.UUID(start.execution_id)
 
     fake_runtime = AgentRuntime(
-        planner=FakePlanner(
-            [ToolAction(tool_name="does_not_exist", arguments={}, reason="probe")]
-        )
+        planner=FakePlanner([ToolAction(tool_name="does_not_exist", arguments={}, reason="probe")])
     )
     result = fake_runtime.step(execution_id, seeded_db)
     assert result.status == "FAILED"
@@ -321,7 +318,9 @@ def test_approval_pauses_runtime(seeded_db):
 def test_resume_after_approval_completes_execution(seeded_db):
     execution_id, result = _run_refund_workflow_to_approval(seeded_db)
     approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="alice", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "alice"),
+        db=seeded_db,
     )
 
     resume_result = runtime.resume(execution_id, seeded_db)
@@ -337,7 +336,9 @@ def test_resume_after_approval_completes_execution(seeded_db):
 def test_approved_action_not_repeated_on_resume(seeded_db):
     execution_id, result = _run_refund_workflow_to_approval(seeded_db)
     approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="alice", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "alice"),
+        db=seeded_db,
     )
     runtime.resume(execution_id, seeded_db)
 
@@ -352,7 +353,9 @@ def test_approved_action_not_repeated_on_resume(seeded_db):
 def test_double_resume_does_not_double_execute(seeded_db):
     execution_id, result = _run_refund_workflow_to_approval(seeded_db)
     approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="alice", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "alice"),
+        db=seeded_db,
     )
 
     first = runtime.resume(execution_id, seeded_db)
@@ -372,7 +375,7 @@ def test_rejected_approval_blocks_execution_on_resume(seeded_db):
     execution_id, result = _run_refund_workflow_to_approval(seeded_db)
     approval_engine.reject(
         approval_id=uuid.UUID(result.approval_request_id),
-        resolved_by="bob",
+        operator=make_operator(seeded_db, "bob"),
         reason=None,
         db=seeded_db,
     )
@@ -423,7 +426,9 @@ def test_approval_after_cancellation_fails_closed(seeded_db):
     runtime.cancel(execution_id, seeded_db)
 
     approve_result = approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="alice", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "alice"),
+        db=seeded_db,
     )
     assert approve_result.status == "INVALID_STATE"
 
@@ -525,7 +530,9 @@ def test_production_deploy_requires_approval_then_completes_exactly_once(seeded_
     assert result.status == "WAITING_APPROVAL"
 
     approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="ops-lead", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "ops-lead"),
+        db=seeded_db,
     )
     resume_result = runtime.resume(execution_id, seeded_db)
     assert resume_result.status == "COMPLETED"
@@ -542,7 +549,9 @@ def test_production_deploy_requires_approval_then_completes_exactly_once(seeded_
 def test_execution_audit_ordering(seeded_db):
     execution_id, result = _run_refund_workflow_to_approval(seeded_db)
     approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="alice", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "alice"),
+        db=seeded_db,
     )
     runtime.resume(execution_id, seeded_db)
 
@@ -609,7 +618,9 @@ def test_concurrent_step_calls_cannot_run_same_step_twice(seeded_db, db_engine):
 def test_concurrent_resume_cannot_double_run(seeded_db, db_engine):
     execution_id, result = _run_refund_workflow_to_approval(seeded_db)
     approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="alice", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "alice"),
+        db=seeded_db,
     )
 
     barrier = Barrier(2)
@@ -682,6 +693,24 @@ def test_cancellation_race_prevents_tool_execution_deterministic(seeded_db, monk
     )
     assert all(tr.status.value != "EXECUTED" for tr in tool_requests)
 
+    # Milestone 10 audit-consistency fix: the terminal-status CAS to FAILED
+    # lost to the earlier CANCELLED transition, so the audit trail must not
+    # claim EXECUTION_FAILED (a status transition that never happened) --
+    # it must describe reality via EXECUTION_STATUS_ALREADY_TERMINAL.
+    events = (
+        seeded_db.query(AuditEvent)
+        .filter_by(execution_id=execution_id)
+        .order_by(AuditEvent.sequence)
+        .all()
+    )
+    assert not any(e.event_type == AuditEventType.EXECUTION_FAILED for e in events)
+    already_terminal_events = [
+        e for e in events if e.event_type == AuditEventType.EXECUTION_STATUS_ALREADY_TERMINAL
+    ]
+    assert len(already_terminal_events) == 1
+    assert already_terminal_events[0].event_metadata["attempted_status"] == "FAILED"
+    assert already_terminal_events[0].event_metadata["actual_status"] == "CANCELLED"
+
 
 def test_cancellation_race_stress_with_real_threads(db_engine, seeded_db):
     # Real concurrent sessions, repeated: fire step() and cancel() from
@@ -722,9 +751,7 @@ def test_cancellation_race_stress_with_real_threads(db_engine, seeded_db):
 
         with Session(db_engine) as check:
             execution = check.get(Execution, execution_id)
-            deployed = (
-                check.query(Deployment).filter_by(version=f"7.{i}.0").count() > 0
-            )
+            deployed = check.query(Deployment).filter_by(version=f"7.{i}.0").count() > 0
             executed_requests = (
                 check.query(ToolRequest)
                 .filter_by(

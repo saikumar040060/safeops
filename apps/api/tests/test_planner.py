@@ -164,7 +164,11 @@ def test_deploy_staging_workflow():
     decision = planner.next_action(execution, {}, history)
     assert isinstance(decision, ToolAction)
     assert decision.tool_name == "deploy_staging"
-    assert decision.arguments == {"service_name": "checkout-service", "version": "2.0"}
+    assert decision.arguments == {
+        "service_name": "checkout-service",
+        "version": "2.0",
+        "idempotency_key": f"runtime-{execution.id}-deploy_staging",
+    }
 
 
 def test_deploy_production_workflow():

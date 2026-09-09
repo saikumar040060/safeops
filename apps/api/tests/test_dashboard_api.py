@@ -9,8 +9,8 @@ runtime = AgentRuntime()
 approval_engine = ApprovalEngine()
 
 
-def test_dashboard_summary_empty_baseline(client):
-    response = client.get("/api/dashboard/summary")
+def test_dashboard_summary_empty_baseline(viewer_client):
+    response = viewer_client.get("/api/dashboard/summary")
     assert response.status_code == 200
     body = response.json()
     metrics = body["metrics"]
@@ -26,12 +26,10 @@ def test_dashboard_summary_empty_baseline(client):
     assert body["recent_blocked"] == []
 
 
-def test_dashboard_summary_reflects_real_backend_state(client, seeded_db):
+def test_dashboard_summary_reflects_real_backend_state(viewer_client, seeded_db):
     agent = seeded_db.query(Agent).filter_by(name="support-agent").one()
 
-    start = runtime.start_execution(
-        agent_id=agent.id, objective="test objective", db=seeded_db
-    )
+    start = runtime.start_execution(agent_id=agent.id, objective="test objective", db=seeded_db)
     running_execution_id = uuid.UUID(start.execution_id)
 
     completed_execution = Execution(
@@ -40,7 +38,7 @@ def test_dashboard_summary_reflects_real_backend_state(client, seeded_db):
     seeded_db.add(completed_execution)
     seeded_db.commit()
 
-    response = client.get("/api/dashboard/summary")
+    response = viewer_client.get("/api/dashboard/summary")
     assert response.status_code == 200
     metrics = response.json()["metrics"]
     assert metrics["active_executions"] == 1
@@ -51,7 +49,7 @@ def test_dashboard_summary_reflects_real_backend_state(client, seeded_db):
     assert str(completed_execution.id) in execution_ids
 
 
-def test_dashboard_summary_counts_pending_approval(client, seeded_db):
+def test_dashboard_summary_counts_pending_approval(viewer_client, seeded_db):
     agent = seeded_db.query(Agent).filter_by(name="support-agent").one()
     start = runtime.start_execution(
         agent_id=agent.id,
@@ -64,10 +62,7 @@ def test_dashboard_summary_counts_pending_approval(client, seeded_db):
     result = runtime.step(execution_id, seeded_db)
     assert result.status == "WAITING_APPROVAL"
 
-    response = client.get("/api/dashboard/summary")
+    response = viewer_client.get("/api/dashboard/summary")
     metrics = response.json()["metrics"]
     assert metrics["waiting_approvals"] == 1
-    assert any(
-        a["id"] == result.approval_request_id
-        for a in response.json()["recent_approvals"]
-    )
+    assert any(a["id"] == result.approval_request_id for a in response.json()["recent_approvals"])

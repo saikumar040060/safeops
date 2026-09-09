@@ -5,10 +5,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.security import require_permission
 from app.models import Agent, AgentToolPermission, Execution, Tool
 from app.schemas.agent import AgentDetail, AgentRead, ExecutionBrief, ToolPermissionSummary
 
-router = APIRouter(prefix="/agents", tags=["agents"])
+router = APIRouter(
+    prefix="/agents", tags=["agents"], dependencies=[Depends(require_permission("read"))]
+)
 
 
 @router.get("", response_model=list[AgentRead])

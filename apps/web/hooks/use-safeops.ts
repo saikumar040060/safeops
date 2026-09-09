@@ -7,6 +7,14 @@ import * as api from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 import { isTerminalStatus, type ExecutionStatus } from "@/lib/types";
 
+export function usePublicConfig() {
+  return useQuery({
+    queryKey: queryKeys.publicConfig,
+    queryFn: api.fetchPublicConfig,
+    staleTime: Infinity,
+  });
+}
+
 export function useDashboardSummary() {
   return useQuery({
     queryKey: queryKeys.dashboard,
@@ -122,8 +130,7 @@ export function useApprovals() {
 export function useApproveApproval() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, resolvedBy }: { id: string; resolvedBy: string }) =>
-      api.approveApproval(id, resolvedBy),
+    mutationFn: ({ id }: { id: string }) => api.approveApproval(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.approvals });
       queryClient.invalidateQueries({ queryKey: ["executions"] });
@@ -135,8 +142,8 @@ export function useApproveApproval() {
 export function useRejectApproval() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, resolvedBy, reason }: { id: string; resolvedBy: string; reason?: string }) =>
-      api.rejectApproval(id, resolvedBy, reason),
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      api.rejectApproval(id, reason),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.approvals });
       queryClient.invalidateQueries({ queryKey: ["executions"] });

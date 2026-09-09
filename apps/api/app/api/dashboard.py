@@ -3,11 +3,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.security import require_permission
 from app.models import ApprovalRequest, AuditEvent, Execution, RiskAssessment, SecurityIncident
 from app.models.enums import ApprovalStatus, AuditEventType, ExecutionStatus, IncidentStatus
 from app.schemas.dashboard import DashboardMetrics, DashboardSummary, SeverityCount
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+router = APIRouter(
+    prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(require_permission("read"))]
+)
 
 BLOCKED_EVENT_TYPES = (
     AuditEventType.ACTION_DENIED,
@@ -23,9 +26,7 @@ def get_dashboard_summary(db: Session = Depends(get_db)) -> DashboardSummary:
     active_executions = db.scalar(
         select(func.count())
         .select_from(Execution)
-        .where(
-            Execution.status.in_([ExecutionStatus.RUNNING, ExecutionStatus.WAITING_APPROVAL])
-        )
+        .where(Execution.status.in_([ExecutionStatus.RUNNING, ExecutionStatus.WAITING_APPROVAL]))
     )
     waiting_approvals = db.scalar(
         select(func.count())

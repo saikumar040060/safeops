@@ -27,6 +27,21 @@ export type IncidentType =
   | "FINANCIAL_RISK"
   | "UNUSUAL_TOOL_SEQUENCE";
 
+export type OperatorRole = "VIEWER" | "OPERATOR" | "APPROVER" | "ADMIN";
+
+export type Operator = {
+  id: string;
+  username: string;
+  display_name: string;
+  role: OperatorRole;
+  is_active: boolean;
+};
+
+export type PublicConfig = {
+  demo_mode: boolean;
+  environment: string;
+};
+
 export type Agent = {
   id: string;
   name: string;

@@ -13,6 +13,13 @@ class AgentStatus(enum.StrEnum):
     DISABLED = "DISABLED"
 
 
+class OperatorRole(enum.StrEnum):
+    VIEWER = "VIEWER"
+    OPERATOR = "OPERATOR"
+    APPROVER = "APPROVER"
+    ADMIN = "ADMIN"
+
+
 class ExecutionStatus(enum.StrEnum):
     CREATED = "CREATED"
     RUNNING = "RUNNING"
@@ -87,6 +94,7 @@ class AuditEventType(enum.StrEnum):
     EXECUTION_BLOCKED = "EXECUTION_BLOCKED"
     EXECUTION_FAILED = "EXECUTION_FAILED"
     EXECUTION_CANCELLED = "EXECUTION_CANCELLED"
+    EXECUTION_STATUS_ALREADY_TERMINAL = "EXECUTION_STATUS_ALREADY_TERMINAL"
 
 
 class PermissionType(enum.StrEnum):

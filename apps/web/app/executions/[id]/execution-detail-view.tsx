@@ -14,11 +14,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAgents, useAutoStep, useCancelExecution, useExecutionTimeline } from "@/hooks/use-safeops";
+import { hasPermission, useAuth } from "@/lib/auth";
 import { isTerminalStatus } from "@/lib/types";
 
 export function ExecutionDetailView({ executionId }: { executionId: string }) {
   const { data: timeline, isLoading, error } = useExecutionTimeline(executionId);
   const { data: agents } = useAgents();
+  const { operator } = useAuth();
+  const canCancel = hasPermission(operator?.role, "execute");
   const cancelExecution = useCancelExecution(executionId);
 
   const latestStep = timeline?.steps.at(-1);
@@ -59,7 +62,7 @@ export function ExecutionDetailView({ executionId }: { executionId: string }) {
             actions={
               <>
                 <ExecutionStatusBadge status={execution.status} />
-                {!isTerminalStatus(execution.status) && (
+                {!isTerminalStatus(execution.status) && canCancel && (
                   <Button
                     variant="outline"
                     size="sm"

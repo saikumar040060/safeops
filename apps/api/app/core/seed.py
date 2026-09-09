@@ -3,12 +3,15 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.database import SessionLocal
+from app.core.security import issue_token
 from app.models import (
     Agent,
     AgentToolPermission,
     Customer,
     Deployment,
+    Operator,
     Payment,
     Policy,
     Service,
@@ -20,11 +23,44 @@ from app.models.enums import (
     AgentStatus,
     DeploymentEnvironment,
     LogLevel,
+    OperatorRole,
     PaymentStatus,
     PermissionType,
     PolicyAction,
     RiskLevel,
 )
+
+# Fixed, well-known demo credentials -- deliberately obvious/guessable
+# rather than randomly generated, because they only ever exist when
+# SAFEOPS_DEMO_MODE=true, which validate_production_safety() forbids in
+# production. One operator per role so the RBAC story (VIEWER cannot
+# approve, APPROVER can, etc.) is exercisable end-to-end in the demo UI.
+SEED_DEMO_OPERATORS = [
+    {
+        "username": "viewer-demo",
+        "display_name": "Viewer (Demo)",
+        "role": OperatorRole.VIEWER,
+        "token": "sfops_demo_viewer_readonly",
+    },
+    {
+        "username": "operator-demo",
+        "display_name": "Operator (Demo)",
+        "role": OperatorRole.OPERATOR,
+        "token": "sfops_demo_operator_runexec",
+    },
+    {
+        "username": "approver-demo",
+        "display_name": "Approver (Demo)",
+        "role": OperatorRole.APPROVER,
+        "token": "sfops_demo_approver_signoff",
+    },
+    {
+        "username": "admin-demo",
+        "display_name": "Admin (Demo)",
+        "role": OperatorRole.ADMIN,
+        "token": "sfops_demo_admin_allaccess",
+    },
+]
 
 SEED_AGENTS = [
     {
@@ -227,9 +263,7 @@ SEED_POLICIES = [
         "tool_name": "refund_payment",
         "priority": 100,
         "action": PolicyAction.ALLOW,
-        "conditions": {
-            "all": [{"field": "arguments.amount", "operator": "lte", "value": 100}]
-        },
+        "conditions": {"all": [{"field": "arguments.amount", "operator": "lte", "value": 100}]},
     },
     {
         "policy_key": "SUPPORT_REFUND_APPROVAL",
@@ -254,9 +288,7 @@ SEED_POLICIES = [
         "tool_name": "refund_payment",
         "priority": 100,
         "action": PolicyAction.BLOCK,
-        "conditions": {
-            "all": [{"field": "arguments.amount", "operator": "gt", "value": 1000}]
-        },
+        "conditions": {"all": [{"field": "arguments.amount", "operator": "gt", "value": 1000}]},
     },
     {
         "policy_key": "DEVOPS_STAGING_DEPLOY",
@@ -395,9 +427,7 @@ def seed(db: Session) -> None:
         db.add(service)
     db.flush()
 
-    has_deployments = (
-        db.query(Deployment).filter_by(service_id=service.id).first() is not None
-    )
+    has_deployments = db.query(Deployment).filter_by(service_id=service.id).first() is not None
     if not has_deployments:
         for data in SEED_DEPLOYMENTS:
             db.add(
@@ -423,6 +453,28 @@ def seed(db: Session) -> None:
 
     db.commit()
 
+    if get_settings().demo_mode:
+        _seed_demo_operators(db)
+
+
+def _seed_demo_operators(db: Session) -> None:
+    for data in SEED_DEMO_OPERATORS:
+        operator = db.query(Operator).filter_by(username=data["username"]).one_or_none()
+        if operator is None:
+            operator = Operator(
+                username=data["username"], display_name=data["display_name"], role=data["role"]
+            )
+            db.add(operator)
+            db.flush()
+        # Re-issuing on every seed run keeps the well-known demo token valid
+        # even if a previous run's token row was ever revoked or dropped --
+        # seed() must always leave the demo environment in a usable state.
+        existing_token_hashes = {t.token_hash for t in operator.tokens}
+        token, raw = issue_token(operator, raw_token=data["token"])
+        if token.token_hash not in existing_token_hashes:
+            db.add(token)
+    db.commit()
+
 
 def main() -> None:
     db = SessionLocal()
@@ -430,6 +482,11 @@ def main() -> None:
         seed(db)
     finally:
         db.close()
+
+    if get_settings().demo_mode:
+        print("\nDemo operator tokens (SAFEOPS_DEMO_MODE=true only):")
+        for data in SEED_DEMO_OPERATORS:
+            print(f"  {data['role'].value:<9} {data['username']:<15} {data['token']}")
 
 
 if __name__ == "__main__":

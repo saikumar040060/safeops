@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Deployment, Service, ServiceLog
@@ -107,6 +108,13 @@ class GetDeploymentTool(BaseTool):
 class DeployInput(BaseModel):
     service_name: str
     version: str
+    # Optional: when supplied, retrying the same (execution, tool) deploy
+    # attempt -- whether from a human re-clicking approve, an
+    # ApprovalEngine retry, or a stepping-lease recovery re-running a step
+    # whose tool call already fired -- replays the existing deployment
+    # instead of creating a duplicate row. A different key (a genuinely
+    # different deploy) always creates a new row.
+    idempotency_key: str | None = None
 
 
 class DeployOutput(BaseModel):
@@ -116,20 +124,51 @@ class DeployOutput(BaseModel):
     deployed_at: datetime
 
 
-def _deploy(
-    input: DeployInput, db: Session, environment: DeploymentEnvironment
-) -> DeployOutput:
-    service = _get_service(input.service_name, db)
-    deployment = Deployment(service_id=service.id, environment=environment, version=input.version)
-    db.add(deployment)
-    db.commit()
-    db.refresh(deployment)
+def _output_for(service: Service, deployment: Deployment) -> DeployOutput:
     return DeployOutput(
         service_name=service.name,
         environment=deployment.environment.value,
         version=deployment.version,
         deployed_at=deployment.deployed_at,
     )
+
+
+def _deploy(input: DeployInput, db: Session, environment: DeploymentEnvironment) -> DeployOutput:
+    service = _get_service(input.service_name, db)
+
+    if input.idempotency_key is not None:
+        existing = db.scalar(
+            select(Deployment).where(Deployment.idempotency_key == input.idempotency_key)
+        )
+        if existing is not None:
+            return _output_for(service, existing)
+
+    deployment = Deployment(
+        service_id=service.id,
+        environment=environment,
+        version=input.version,
+        idempotency_key=input.idempotency_key,
+    )
+    db.add(deployment)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race against a concurrent caller using the same key: their
+        # insert already landed. Replay their row rather than treating this
+        # as a failure -- that is exactly the "concurrent same operation
+        # executes once" guarantee.
+        db.rollback()
+        if input.idempotency_key is None:
+            raise
+        existing = db.scalar(
+            select(Deployment).where(Deployment.idempotency_key == input.idempotency_key)
+        )
+        if existing is None:
+            raise
+        return _output_for(service, existing)
+
+    db.refresh(deployment)
+    return _output_for(service, deployment)
 
 
 class DeployStagingTool(BaseTool):

@@ -1,9 +1,15 @@
 import uuid
 
-from app.models import Agent
+from sqlalchemy import select
+
+from app.models import Agent, ApprovalRequest, AuditEvent, Operator
+from app.models.enums import AuditEventType
 from app.services.agent_runtime import AgentRuntime
 
 runtime = AgentRuntime()
+
+APPROVER_TOKEN = "sfops_demo_approver_signoff"
+_APPROVER_HEADERS = {"Authorization": f"Bearer {APPROVER_TOKEN}"}
 
 
 def _agent(db, name) -> Agent:
@@ -26,7 +32,7 @@ def _pending_refund_approval(db):
 def test_approval_listing_shows_pending_request(client, seeded_db):
     result = _pending_refund_approval(seeded_db)
 
-    response = client.get("/api/approvals")
+    response = client.get("/api/approvals", headers=_APPROVER_HEADERS)
     assert response.status_code == 200
     approvals = response.json()
     assert len(approvals) == 1
@@ -37,8 +43,12 @@ def test_approval_listing_shows_pending_request(client, seeded_db):
     assert approval["approved_arguments"]["payment_id"] == "PAY-9002"
 
 
+def test_approval_listing_requires_authentication(client):
+    assert client.get("/api/approvals").status_code == 401
+
+
 def test_approval_detail_unknown_id_returns_404(client):
-    response = client.get(f"/api/approvals/{uuid.uuid4()}")
+    response = client.get(f"/api/approvals/{uuid.uuid4()}", headers=_APPROVER_HEADERS)
     assert response.status_code == 404
 
 
@@ -54,11 +64,40 @@ def test_approve_endpoint_ignores_extra_argument_fields(client, seeded_db):
             "resolved_by": "alice",
             "arguments": {"payment_id": "PAY-EVIL", "amount": "999999.00"},
         },
+        headers=_APPROVER_HEADERS,
     )
     assert response.status_code == 200
     body = response.json()
     assert body["tool_result"]["payment_id"] == "PAY-9002"
     assert body["tool_result"]["refund_amount"] == "750.00"
+
+
+def test_approve_endpoint_ignores_spoofed_resolved_by(client, seeded_db):
+    # A caller-supplied `resolved_by` must never override the identity
+    # derived from the authenticated bearer token.
+    result = _pending_refund_approval(seeded_db)
+
+    response = client.post(
+        f"/api/approvals/{result.approval_request_id}/approve",
+        json={"resolved_by": "attacker-spoofed-name"},
+        headers=_APPROVER_HEADERS,
+    )
+    assert response.status_code == 200
+
+    approval = seeded_db.get(ApprovalRequest, uuid.UUID(result.approval_request_id))
+    seeded_db.refresh(approval)
+    assert approval.resolved_by == "approver-demo"
+    assert approval.resolved_by != "attacker-spoofed-name"
+
+    approved_event = seeded_db.scalar(
+        select(AuditEvent).where(
+            AuditEvent.execution_id == approval.execution_id,
+            AuditEvent.event_type == AuditEventType.APPROVAL_APPROVED,
+        )
+    )
+    approver = seeded_db.query(Operator).filter_by(username="approver-demo").one()
+    assert approved_event.event_metadata["actor_id"] == str(approver.id)
+    assert approved_event.event_metadata["actor_type"] == "operator"
 
 
 def test_reject_endpoint(client, seeded_db):
@@ -67,6 +106,7 @@ def test_reject_endpoint(client, seeded_db):
     response = client.post(
         f"/api/approvals/{result.approval_request_id}/reject",
         json={"resolved_by": "bob", "reason": "not authorized"},
+        headers=_APPROVER_HEADERS,
     )
     assert response.status_code == 200
     assert response.json()["status"] == "REJECTED"

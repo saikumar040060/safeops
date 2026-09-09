@@ -5,11 +5,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.security import require_permission
 from app.models import AuditEvent, Execution
 from app.models.enums import AuditEventType
 from app.schemas.audit_event import AuditEventRead
 
-router = APIRouter(prefix="/audit", tags=["audit"])
+router = APIRouter(
+    prefix="/audit", tags=["audit"], dependencies=[Depends(require_permission("read"))]
+)
 
 
 @router.get("", response_model=list[AuditEventRead])
@@ -26,9 +29,7 @@ def list_audit_events(
         query = query.where(AuditEvent.execution_id == execution_id)
     if agent_id is not None:
         query = query.where(
-            AuditEvent.execution_id.in_(
-                select(Execution.id).where(Execution.agent_id == agent_id)
-            )
+            AuditEvent.execution_id.in_(select(Execution.id).where(Execution.agent_id == agent_id))
         )
     if event_type is not None:
         query = query.where(AuditEvent.event_type == event_type)

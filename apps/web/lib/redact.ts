@@ -1,7 +1,7 @@
 const REDACTED = "••••••";
 
 const SENSITIVE_KEY_PATTERN =
-  /pass(word)?|secret|token|api[_-]?key|private[_-]?key|credential|authorization|access[_-]?key/i;
+  /pass(word)?|secret|token|api[_-]?key|private[_-]?key|credential|authorization|access[_-]?key|refresh[_-]?key|cookie/i;
 
 export function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY_PATTERN.test(key);

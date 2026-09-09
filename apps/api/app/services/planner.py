@@ -119,7 +119,7 @@ class DeterministicPlanner:
             return self._refund_duplicate_workflow(execution, customer_match.group(0), history)
 
         if "deploy" in objective_lower:
-            return self._deploy_workflow(objective, objective_lower, history)
+            return self._deploy_workflow(execution, objective, objective_lower, history)
 
         return Fail(
             reason="Objective did not match any known deterministic workflow",
@@ -165,9 +165,7 @@ class DeterministicPlanner:
         )
 
     @staticmethod
-    def _support_ticket_workflow(
-        ticket_id: str, history: list[ExecutionStep]
-    ) -> PlannerDecision:
+    def _support_ticket_workflow(ticket_id: str, history: list[ExecutionStep]) -> PlannerDecision:
         ticket_step = _completed_step(history, "get_support_ticket")
         if ticket_step is None:
             return ToolAction(
@@ -208,7 +206,7 @@ class DeterministicPlanner:
 
     @staticmethod
     def _deploy_workflow(
-        objective: str, objective_lower: str, history: list[ExecutionStep]
+        execution: Execution, objective: str, objective_lower: str, history: list[ExecutionStep]
     ) -> PlannerDecision:
         service_name = next((s for s in KNOWN_SERVICES if s in objective_lower), None)
         version_match = VERSION_PATTERN.search(objective)
@@ -233,6 +231,16 @@ class DeterministicPlanner:
         environment = "production" if target_tool == "deploy_production" else "staging"
         return ToolAction(
             tool_name=target_tool,
-            arguments={"service_name": service_name, "version": version},
+            arguments={
+                "service_name": service_name,
+                "version": version,
+                # Deterministic per (execution, tool): a retried/re-executed
+                # approval or a stepping-lease recovery re-running this
+                # exact step replays the existing deployment row instead of
+                # creating a duplicate (see tools/devops.py::_deploy). A
+                # different execution -- a genuinely new deploy request --
+                # always gets a different key.
+                "idempotency_key": f"runtime-{execution.id}-{target_tool}",
+            },
             reason=f"Deploy {service_name} {version} to {environment}",
         )

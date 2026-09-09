@@ -7,7 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models import AuditEvent, Execution, ExecutionStep, RiskAssessment
+from app.core.rate_limit import rate_limit
+from app.core.security import require_permission
+from app.models import AuditEvent, Execution, ExecutionStep, Operator, RiskAssessment
 from app.models.enums import ExecutionStatus, StepType
 from app.schemas.execution import (
     ExecutionRead,
@@ -19,6 +21,9 @@ from app.services.agent_runtime import AgentRuntime, RuntimeResult
 
 router = APIRouter(prefix="/executions", tags=["executions"])
 runtime = AgentRuntime()
+
+_read = Depends(require_permission("read"))
+_execute = Depends(require_permission("execute"))
 
 
 class StartExecutionBody(BaseModel):
@@ -37,14 +42,19 @@ def _result_or_404(result: RuntimeResult) -> RuntimeResult:
 
 
 @router.post("", response_model=RuntimeResult)
-def create_execution(body: StartExecutionBody, db: Session = Depends(get_db)) -> RuntimeResult:
+def create_execution(
+    body: StartExecutionBody,
+    db: Session = Depends(get_db),
+    operator: Operator = _execute,
+) -> RuntimeResult:
+    rate_limit("execution_create", operator.id, max_requests=20, window_seconds=60)
     result = runtime.start_execution(
         agent_id=body.agent_id, objective=body.objective, context=body.context, db=db
     )
     return _result_or_404(result)
 
 
-@router.get("", response_model=list[ExecutionSummary])
+@router.get("", response_model=list[ExecutionSummary], dependencies=[_read])
 def list_executions(
     status: ExecutionStatus | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
@@ -59,7 +69,7 @@ def list_executions(
     return _to_summaries(db, executions)
 
 
-@router.get("/{execution_id}", response_model=ExecutionRead)
+@router.get("/{execution_id}", response_model=ExecutionRead, dependencies=[_read])
 def get_execution(execution_id: uuid.UUID, db: Session = Depends(get_db)) -> Execution:
     execution = db.get(Execution, execution_id)
     if execution is None:
@@ -67,7 +77,7 @@ def get_execution(execution_id: uuid.UUID, db: Session = Depends(get_db)) -> Exe
     return execution
 
 
-@router.get("/{execution_id}/steps", response_model=list[ExecutionStepRead])
+@router.get("/{execution_id}/steps", response_model=list[ExecutionStepRead], dependencies=[_read])
 def list_execution_steps(
     execution_id: uuid.UUID, db: Session = Depends(get_db)
 ) -> list[ExecutionStep]:
@@ -80,7 +90,7 @@ def list_execution_steps(
     )
 
 
-@router.get("/{execution_id}/timeline", response_model=ExecutionTimeline)
+@router.get("/{execution_id}/timeline", response_model=ExecutionTimeline, dependencies=[_read])
 def get_execution_timeline(
     execution_id: uuid.UUID, db: Session = Depends(get_db)
 ) -> ExecutionTimeline:
@@ -160,15 +170,23 @@ def _to_summaries(db: Session, executions: list[Execution]) -> list[ExecutionSum
 
 
 @router.post("/{execution_id}/step", response_model=RuntimeResult)
-def step_execution(execution_id: uuid.UUID, db: Session = Depends(get_db)) -> RuntimeResult:
+def step_execution(
+    execution_id: uuid.UUID, db: Session = Depends(get_db), operator: Operator = _execute
+) -> RuntimeResult:
+    rate_limit("execution_step", operator.id, max_requests=120, window_seconds=60)
     return _result_or_404(runtime.step(execution_id, db))
 
 
 @router.post("/{execution_id}/resume", response_model=RuntimeResult)
-def resume_execution(execution_id: uuid.UUID, db: Session = Depends(get_db)) -> RuntimeResult:
+def resume_execution(
+    execution_id: uuid.UUID, db: Session = Depends(get_db), operator: Operator = _execute
+) -> RuntimeResult:
+    rate_limit("execution_resume", operator.id, max_requests=120, window_seconds=60)
     return _result_or_404(runtime.resume(execution_id, db))
 
 
 @router.post("/{execution_id}/cancel", response_model=RuntimeResult)
-def cancel_execution(execution_id: uuid.UUID, db: Session = Depends(get_db)) -> RuntimeResult:
+def cancel_execution(
+    execution_id: uuid.UUID, db: Session = Depends(get_db), operator: Operator = _execute
+) -> RuntimeResult:
     return _result_or_404(runtime.cancel(execution_id, db))

@@ -28,11 +28,17 @@ afterEach(() => {
 });
 
 function stubFetch(approvals: ApprovalRequest[]) {
-  const calls: Array<{ url: string; method: string; body: unknown }> = [];
+  const calls: Array<{ url: string; method: string; body: unknown; authorization: string | null }> = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    const headers = new Headers(init?.headers);
+    calls.push({
+      url,
+      method,
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      authorization: headers.get("Authorization"),
+    });
 
     if (url.endsWith("/api/approvals") && method === "GET") {
       return jsonResponse(approvals);
@@ -82,7 +88,7 @@ describe("ApprovalsPage", () => {
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
   });
 
-  it("approve button posts only resolver identity, never replacement arguments", async () => {
+  it("approve button never sends a resolver identity in the body -- it comes from the auth header", async () => {
     const { calls } = stubFetch([PENDING_APPROVAL]);
     renderWithQuery(<ApprovalsPage />);
 
@@ -92,11 +98,12 @@ describe("ApprovalsPage", () => {
     await waitFor(() => {
       const approveCall = calls.find((c) => c.url.includes("/approve"));
       expect(approveCall).toBeDefined();
-      expect(approveCall?.body).toEqual({ resolved_by: "demo-operator" });
+      expect(approveCall?.body).toEqual({});
+      expect(approveCall?.authorization).toBe("Bearer test-token");
     });
   });
 
-  it("reject button calls the reject endpoint", async () => {
+  it("reject button calls the reject endpoint with only a reason, never an identity", async () => {
     const { calls } = stubFetch([PENDING_APPROVAL]);
     renderWithQuery(<ApprovalsPage />);
 
@@ -106,8 +113,18 @@ describe("ApprovalsPage", () => {
     await waitFor(() => {
       const rejectCall = calls.find((c) => c.url.includes("/reject"));
       expect(rejectCall).toBeDefined();
-      expect(rejectCall?.body).toMatchObject({ resolved_by: "demo-operator" });
+      expect(rejectCall?.body).toEqual({ reason: "Rejected from Approval Center" });
+      expect(rejectCall?.authorization).toBe("Bearer test-token");
     });
+  });
+
+  it("does not render approve/reject controls for a VIEWER -- backend still enforces independently", async () => {
+    stubFetch([PENDING_APPROVAL]);
+    renderWithQuery(<ApprovalsPage />, { operator: { role: "VIEWER" } });
+
+    await screen.findByText("refund_payment");
+    expect(screen.queryByRole("button", { name: /^approve$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^reject$/i })).not.toBeInTheDocument();
   });
 
   it("shows an empty state when there is nothing pending", async () => {

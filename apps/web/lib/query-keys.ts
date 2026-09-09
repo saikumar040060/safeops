@@ -1,5 +1,6 @@
 export const queryKeys = {
   health: ["health"] as const,
+  publicConfig: ["auth", "config"] as const,
   dashboard: ["dashboard", "summary"] as const,
   agents: ["agents"] as const,
   agent: (id: string) => ["agents", id] as const,

@@ -22,6 +22,15 @@ class Deployment(Base):
         index=True,
     )
     version: Mapped[str] = mapped_column(String(64))
+    # Nullable + unique so historical rows (created before this column
+    # existed) keep NULL -- Postgres treats multiple NULLs in a unique
+    # index as distinct, so uniqueness is only enforced going forward for
+    # rows that actually supply a key. See tools/devops.py::_deploy for how
+    # a retried/re-executed deploy with the same key replays the existing
+    # row instead of inserting a duplicate.
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, default=None
+    )
     deployed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )

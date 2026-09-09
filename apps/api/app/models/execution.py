@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Uuid, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -32,22 +32,25 @@ class Execution(Base):
     # state rather than in-memory state that wouldn't survive a process
     # boundary.
     initial_context: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
-    # Non-blocking claim flag AgentRuntime.step()/resume() use to serialize
-    # the whole plan-execute-finalize critical section for one execution.
+    # Lease-based claim AgentRuntime.step()/resume() use to serialize the
+    # whole plan-execute-finalize critical section for one execution.
     # Deliberately plain transactional row data rather than a Postgres
     # session-level advisory lock: SQLAlchemy sessions do not pin one
     # physical connection across the many small commits that section makes,
     # so a lock acquired on one connection could be "released" on another,
-    # never actually freeing it. A stuck True here after a crash mid-step is
-    # a known limitation, the same class of crash window already accepted
-    # for a dangling PENDING ExecutionStep.
+    # never actually freeing it. `stepping_claim_id` + `stepping_claimed_at`
+    # turn the old permanent boolean into a TTL'd lease: a claim older than
+    # STEPPING_LEASE_TTL is treated as stale and safely recoverable by a new
+    # claimant (see agent_runtime.py for the full CAS/ownership argument),
+    # closing the "crashed process leaves stepping=True forever" liveness
+    # bug the plain boolean had.
     stepping: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+    stepping_claim_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, default=None)
+    stepping_claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
     )
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     agent: Mapped["Agent"] = relationship(back_populates="executions")

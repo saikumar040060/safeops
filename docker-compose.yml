@@ -20,6 +20,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/api.Dockerfile
+      target: dev
     restart: unless-stopped
     env_file:
       - .env
@@ -35,6 +36,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/web.Dockerfile
+      target: dev
     restart: unless-stopped
     env_file:
       - .env

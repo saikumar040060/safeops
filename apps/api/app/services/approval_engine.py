@@ -11,6 +11,7 @@ from app.models import (
     ApprovalRequest,
     AuditEvent,
     Execution,
+    Operator,
     ToolRequest,
 )
 from app.models.enums import ApprovalStatus, AuditEventType, ExecutionStatus, ToolRequestStatus
@@ -61,18 +62,16 @@ class ApprovalEngine:
         return db.get(ApprovalRequest, approval_id)
 
     def approve(
-        self, *, approval_id: uuid.UUID, resolved_by: str, db: Session
+        self, *, approval_id: uuid.UUID, operator: Operator, db: Session
     ) -> ApprovalActionResult:
-        return self._resolve(
-            approval_id=approval_id, resolved_by=resolved_by, approve=True, db=db
-        )
+        return self._resolve(approval_id=approval_id, operator=operator, approve=True, db=db)
 
     def reject(
-        self, *, approval_id: uuid.UUID, resolved_by: str, reason: str | None, db: Session
+        self, *, approval_id: uuid.UUID, operator: Operator, reason: str | None, db: Session
     ) -> ApprovalActionResult:
         return self._resolve(
             approval_id=approval_id,
-            resolved_by=resolved_by,
+            operator=operator,
             approve=False,
             rejection_reason=reason,
             db=db,
@@ -82,11 +81,18 @@ class ApprovalEngine:
         self,
         *,
         approval_id: uuid.UUID,
-        resolved_by: str,
+        operator: Operator,
         approve: bool,
         db: Session,
         rejection_reason: str | None = None,
     ) -> ApprovalActionResult:
+        # The only identity that is ever trusted for resolved_by / audit
+        # actor is the authenticated Operator resolved server-side from the
+        # bearer token (see app.core.security.get_current_operator) -- a
+        # caller cannot influence this by supplying a different name in the
+        # request body; the approve/reject request schemas below no longer
+        # even accept one.
+        resolved_by = operator.username
         approval = db.get(ApprovalRequest, approval_id)
         if approval is None:
             return ApprovalActionResult(status="NOT_FOUND", reason="Approval request not found")
@@ -165,6 +171,8 @@ class ApprovalEngine:
                         event_metadata={
                             "approval_id": str(approval.id),
                             "tool_name": approval.tool_name,
+                            "actor_type": "operator",
+                            "actor_id": str(operator.id),
                         },
                     ),
                     tool_request,
@@ -192,6 +200,8 @@ class ApprovalEngine:
                     event_metadata={
                         "approval_id": str(approval.id),
                         "tool_name": approval.tool_name,
+                        "actor_type": "operator",
+                        "actor_id": str(operator.id),
                     },
                 )
             ],

@@ -5,11 +5,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.security import require_permission
 from app.models import SecurityIncident
 from app.models.enums import IncidentStatus, RiskLevel
 from app.schemas.security_incident import SecurityIncidentRead
 
-router = APIRouter(prefix="/security", tags=["security"])
+router = APIRouter(
+    prefix="/security", tags=["security"], dependencies=[Depends(require_permission("read"))]
+)
 
 
 @router.get("/incidents", response_model=list[SecurityIncidentRead])

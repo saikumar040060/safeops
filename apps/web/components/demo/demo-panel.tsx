@@ -9,6 +9,7 @@ import { fetchAgents } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useStartExecution } from "@/hooks/use-safeops";
+import { hasPermission, useAuth } from "@/lib/auth";
 
 type Demo = {
   id: string;
@@ -53,6 +54,8 @@ export function DemoPanel() {
   const router = useRouter();
   const startExecution = useStartExecution();
   const [launchingId, setLaunchingId] = useState<string | null>(null);
+  const { operator } = useAuth();
+  const canLaunch = hasPermission(operator?.role, "execute");
 
   async function launch(demo: Demo) {
     setLaunchingId(demo.id);
@@ -102,7 +105,8 @@ export function DemoPanel() {
               size="sm"
               variant="outline"
               className="self-start"
-              disabled={launchingId !== null}
+              disabled={launchingId !== null || !canLaunch}
+              title={canLaunch ? undefined : "Your role cannot start executions."}
               onClick={() => launch(demo)}
             >
               {launchingId === demo.id ? (

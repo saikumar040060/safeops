@@ -12,6 +12,7 @@ from app.models import (
     AuditEvent,
     Deployment,
     Execution,
+    Operator,
     Payment,
     Service,
     ToolRequest,
@@ -19,6 +20,7 @@ from app.models import (
 from app.models.enums import AuditEventType, ExecutionStatus, PaymentStatus, ToolRequestStatus
 from app.services.approval_engine import ApprovalEngine
 from app.services.tool_gateway import ToolGateway
+from tests.conftest import make_operator
 
 gateway = ToolGateway()
 approval_engine = ApprovalEngine()
@@ -135,7 +137,9 @@ def test_modified_agent_arguments_cannot_affect_approved_action(seeded_db):
     original_args["payment_id"] = "PAY-9001"
 
     approve_result = approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="alice", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "alice"),
+        db=seeded_db,
     )
 
     assert approve_result.status == "EXECUTED"
@@ -147,7 +151,9 @@ def test_approval_executes_original_action_exactly_once(seeded_db):
     result, execution = _request_refund_approval(seeded_db, amount="750.00")
 
     approve_result = approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="alice", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "alice"),
+        db=seeded_db,
     )
 
     assert approve_result.status == "EXECUTED"
@@ -171,7 +177,7 @@ def test_reject_causes_zero_side_effects(seeded_db):
 
     reject_result = approval_engine.reject(
         approval_id=uuid.UUID(result.approval_request_id),
-        resolved_by="bob",
+        operator=make_operator(seeded_db, "bob"),
         reason="Looks fraudulent",
         db=seeded_db,
     )
@@ -202,8 +208,7 @@ def test_rejection_reapplies_state_after_audit_retry(seeded_db, monkeypatch):
     def collide_once():
         nonlocal collision_raised
         has_rejection_event = any(
-            isinstance(row, AuditEvent)
-            and row.event_type == AuditEventType.APPROVAL_REJECTED
+            isinstance(row, AuditEvent) and row.event_type == AuditEventType.APPROVAL_REJECTED
             for row in seeded_db.new
         )
         if has_rejection_event and not collision_raised:
@@ -214,7 +219,7 @@ def test_rejection_reapplies_state_after_audit_retry(seeded_db, monkeypatch):
     monkeypatch.setattr(seeded_db, "commit", collide_once)
     reject_result = approval_engine.reject(
         approval_id=uuid.UUID(result.approval_request_id),
-        resolved_by="bob",
+        operator=make_operator(seeded_db, "bob"),
         reason=None,
         db=seeded_db,
     )
@@ -234,7 +239,7 @@ def test_expired_approval_cannot_execute(seeded_db):
     seeded_db.commit()
 
     approve_result = approval_engine.approve(
-        approval_id=approval.id, resolved_by="alice", db=seeded_db
+        approval_id=approval.id, operator=make_operator(seeded_db, "alice"), db=seeded_db
     )
 
     assert approve_result.status == "ALREADY_RESOLVED"
@@ -255,8 +260,12 @@ def test_double_approve_executes_once(seeded_db):
     result, _ = _request_refund_approval(seeded_db)
     approval_id = uuid.UUID(result.approval_request_id)
 
-    first = approval_engine.approve(approval_id=approval_id, resolved_by="alice", db=seeded_db)
-    second = approval_engine.approve(approval_id=approval_id, resolved_by="alice", db=seeded_db)
+    first = approval_engine.approve(
+        approval_id=approval_id, operator=make_operator(seeded_db, "alice"), db=seeded_db
+    )
+    second = approval_engine.approve(
+        approval_id=approval_id, operator=make_operator(seeded_db, "alice"), db=seeded_db
+    )
 
     assert first.status == "EXECUTED"
     assert second.status == "ALREADY_RESOLVED"
@@ -274,6 +283,8 @@ def test_double_approve_executes_once(seeded_db):
 def test_concurrent_approve_attempts_execute_once(seeded_db, db_engine):
     result, execution = _request_refund_approval(seeded_db)
     approval_id = uuid.UUID(result.approval_request_id)
+    operator_id = make_operator(seeded_db, "concurrent").id
+    seeded_db.commit()
 
     from threading import Barrier
 
@@ -281,10 +292,9 @@ def test_concurrent_approve_attempts_execute_once(seeded_db, db_engine):
 
     def call_approve():
         with Session(db_engine) as session:
+            operator = session.get(Operator, operator_id)
             barrier.wait(timeout=5)
-            return approval_engine.approve(
-                approval_id=approval_id, resolved_by="concurrent", db=session
-            )
+            return approval_engine.approve(approval_id=approval_id, operator=operator, db=session)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: call_approve(), range(2)))
@@ -303,9 +313,7 @@ def test_concurrent_approve_attempts_execute_once(seeded_db, db_engine):
     assert executed_requests == 1
 
 
-def test_concurrent_gateway_calls_create_only_one_approval(
-    seeded_db, db_engine, monkeypatch
-):
+def test_concurrent_gateway_calls_create_only_one_approval(seeded_db, db_engine, monkeypatch):
     agent = _agent(seeded_db, "support-agent")
     execution = _make_execution(seeded_db, agent)
 
@@ -350,10 +358,12 @@ def test_concurrent_gateway_calls_create_only_one_approval(
 def test_approve_after_reject_fails(seeded_db):
     result, _ = _request_refund_approval(seeded_db)
     approval_id = uuid.UUID(result.approval_request_id)
-    approval_engine.reject(approval_id=approval_id, resolved_by="bob", reason=None, db=seeded_db)
+    approval_engine.reject(
+        approval_id=approval_id, operator=make_operator(seeded_db, "bob"), reason=None, db=seeded_db
+    )
 
     approve_result = approval_engine.approve(
-        approval_id=approval_id, resolved_by="alice", db=seeded_db
+        approval_id=approval_id, operator=make_operator(seeded_db, "alice"), db=seeded_db
     )
 
     assert approve_result.status == "ALREADY_RESOLVED"
@@ -365,10 +375,12 @@ def test_approve_after_reject_fails(seeded_db):
 def test_reject_after_approve_fails(seeded_db):
     result, _ = _request_refund_approval(seeded_db)
     approval_id = uuid.UUID(result.approval_request_id)
-    approval_engine.approve(approval_id=approval_id, resolved_by="alice", db=seeded_db)
+    approval_engine.approve(
+        approval_id=approval_id, operator=make_operator(seeded_db, "alice"), db=seeded_db
+    )
 
     reject_result = approval_engine.reject(
-        approval_id=approval_id, resolved_by="bob", reason=None, db=seeded_db
+        approval_id=approval_id, operator=make_operator(seeded_db, "bob"), reason=None, db=seeded_db
     )
 
     assert reject_result.status == "ALREADY_RESOLVED"
@@ -378,14 +390,16 @@ def test_reject_after_approve_fails(seeded_db):
 def test_approve_after_execution_fails_safely(seeded_db):
     result, _ = _request_refund_approval(seeded_db)
     approval_id = uuid.UUID(result.approval_request_id)
-    approval_engine.approve(approval_id=approval_id, resolved_by="alice", db=seeded_db)
+    approval_engine.approve(
+        approval_id=approval_id, operator=make_operator(seeded_db, "alice"), db=seeded_db
+    )
 
-    second = approval_engine.approve(approval_id=approval_id, resolved_by="alice", db=seeded_db)
+    second = approval_engine.approve(
+        approval_id=approval_id, operator=make_operator(seeded_db, "alice"), db=seeded_db
+    )
 
     assert second.status == "ALREADY_RESOLVED"
-    refund_count = (
-        seeded_db.query(ToolRequest).filter_by(status=ToolRequestStatus.EXECUTED).count()
-    )
+    refund_count = seeded_db.query(ToolRequest).filter_by(status=ToolRequestStatus.EXECUTED).count()
     assert refund_count >= 1  # sanity: didn't wipe state
     payment = seeded_db.query(Payment).filter_by(payment_id="PAY-9003").one()
     assert payment.status.value == "REFUNDED"
@@ -393,7 +407,7 @@ def test_approve_after_execution_fails_safely(seeded_db):
 
 def test_missing_approval_fails_safely(seeded_db):
     result = approval_engine.approve(
-        approval_id=uuid.uuid4(), resolved_by="alice", db=seeded_db
+        approval_id=uuid.uuid4(), operator=make_operator(seeded_db, "alice"), db=seeded_db
     )
 
     assert result.status == "NOT_FOUND"
@@ -421,7 +435,7 @@ def test_wrong_execution_relationship_fails_closed(seeded_db):
     seeded_db.commit()
 
     approve_result = approval_engine.approve(
-        approval_id=approval.id, resolved_by="alice", db=seeded_db
+        approval_id=approval.id, operator=make_operator(seeded_db, "alice"), db=seeded_db
     )
 
     assert approve_result.status == "INVALID_STATE"
@@ -436,7 +450,9 @@ def test_terminal_execution_cannot_be_resumed_incorrectly(seeded_db):
     seeded_db.commit()
 
     approve_result = approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="alice", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "alice"),
+        db=seeded_db,
     )
 
     assert approve_result.status == "INVALID_STATE"
@@ -447,7 +463,9 @@ def test_terminal_execution_cannot_be_resumed_incorrectly(seeded_db):
 def test_approval_audit_events_ordered_correctly(seeded_db):
     result, execution = _request_refund_approval(seeded_db)
     approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="alice", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "alice"),
+        db=seeded_db,
     )
 
     event_types = [e.event_type.value for e in _events(seeded_db, execution.id)]
@@ -474,7 +492,7 @@ def test_rejection_audit_events_ordered_correctly(seeded_db):
     result, execution = _request_refund_approval(seeded_db)
     approval_engine.reject(
         approval_id=uuid.UUID(result.approval_request_id),
-        resolved_by="bob",
+        operator=make_operator(seeded_db, "bob"),
         reason=None,
         db=seeded_db,
     )
@@ -518,7 +536,9 @@ def test_tool_failure_after_approval_is_recorded_correctly(seeded_db):
     seeded_db.commit()
 
     approve_result = approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="alice", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "alice"),
+        db=seeded_db,
     )
 
     assert approve_result.status == "FAILED"
@@ -544,7 +564,9 @@ def test_unexpected_tool_exception_after_approval_does_not_leak(seeded_db, monke
     monkeypatch.setattr(registered_tool, "execute", explode)
 
     approve_result = approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="alice", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "alice"),
+        db=seeded_db,
     )
 
     assert approve_result.status == "FAILED"
@@ -569,11 +591,11 @@ def test_deploy_production_approval_executes_deployment(seeded_db):
     assert result.status == "REQUIRES_APPROVAL"
 
     approve_result = approval_engine.approve(
-        approval_id=uuid.UUID(result.approval_request_id), resolved_by="ops-lead", db=seeded_db
+        approval_id=uuid.UUID(result.approval_request_id),
+        operator=make_operator(seeded_db, "ops-lead"),
+        db=seeded_db,
     )
 
     assert approve_result.status == "EXECUTED"
-    versions = {
-        d.version for d in seeded_db.query(Deployment).filter_by(service_id=service.id)
-    }
+    versions = {d.version for d in seeded_db.query(Deployment).filter_by(service_id=service.id)}
     assert "approval-demo-1" in versions
