@@ -29,9 +29,12 @@ USER appuser
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health', timeout=2).status == 200 else 1)"
 
-# Signal handling: uvicorn is PID 1 here (exec-form CMD, no shell wrapper)
-# so it receives SIGTERM directly from the container runtime and shuts
-# down gracefully instead of being killed after a shell forwards nothing.
+# Config is validated once here, before uvicorn (and therefore before any
+# worker process) ever starts -- see app/core/startup_check.py for why
+# this has to happen outside uvicorn's own worker-respawn loop rather than
+# only at app.main import time. `exec` replaces this shell with uvicorn on
+# success, so uvicorn still ends up as PID 1 and receives SIGTERM directly
+# from the container runtime for a graceful shutdown.
 #
 # Known limitation: app.core.rate_limit and app.core.metrics keep their
 # counters in-process (see their docstrings). With >1 worker each worker
@@ -41,4 +44,4 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
 # now per the milestone's "do not overengineer distributed rate limiting
 # yet" scope; move to a shared store (Redis, or Postgres-backed counters)
 # before relying on multi-worker deployments for either guarantee.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers"]
+CMD ["sh", "-c", "python -m app.core.startup_check && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers"]

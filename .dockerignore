@@ -1,0 +1,21 @@
+# Applies to the build context (repo root) for every Dockerfile under
+# infra/docker/ -- COPY commands like `COPY apps/api .` still copy from
+# the build context, so patterns here reach into subdirectories too.
+# Milestone 10 finding: without this file, a real .env dropped into
+# apps/api/ or apps/web/ (a natural, gitignored, commonly-used location
+# with pydantic-settings' env_file=".env") would be baked directly into
+# the image layers. Never allow that regardless of what ends up on disk
+# in a checkout -- .env.example is intentionally NOT excluded here since
+# it holds placeholders only and is safe (and useful) to ship.
+**/.env
+**/.env.local
+**/.env.*.local
+
+.git
+**/node_modules
+**/.next
+**/__pycache__
+**/*.pyc
+**/.venv
+**/.pytest_cache
+**/.ruff_cache

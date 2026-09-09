@@ -28,6 +28,22 @@ def _is_sensitive_key(key: str) -> bool:
     return bool(_SENSITIVE_KEY_PATTERN.search(key))
 
 
+def _redact_recursive(value: object) -> object:
+    """Walks nested dicts/lists/tuples and masks any dict value whose key
+    looks like a secret, at any depth -- not just the top level. Needed
+    because a single `extra={"errors": [...]}` call (e.g. the
+    RequestValidationError handler logging pydantic's exc.errors()) nests
+    the actually-interesting per-field data several levels deep."""
+    if isinstance(value, dict):
+        return {
+            k: ("***REDACTED***" if _is_sensitive_key(str(k)) else _redact_recursive(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_recursive(item) for item in value]
+    return value
+
+
 class ContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = get_request_id()
@@ -50,7 +66,7 @@ class RedactingJSONFormatter(logging.Formatter):
         for key, value in record.__dict__.items():
             if key in _RESERVED_LOG_RECORD_ATTRS or key in payload:
                 continue
-            payload[key] = "***REDACTED***" if _is_sensitive_key(key) else value
+            payload[key] = "***REDACTED***" if _is_sensitive_key(key) else _redact_recursive(value)
         if record.exc_info:
             # Deliberately never included: this is server-side-only logging
             # (never returned to a caller), but we still avoid dumping raw

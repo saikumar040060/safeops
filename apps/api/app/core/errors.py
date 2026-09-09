@@ -31,6 +31,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.core.logging import _is_sensitive_key
 from app.core.request_context import get_request_id
 
 logger = logging.getLogger("safeops")
@@ -38,6 +39,21 @@ logger = logging.getLogger("safeops")
 
 def _is_generic_error_detail(detail: Any) -> bool:
     return isinstance(detail, dict) and "code" in detail and "message" in detail
+
+
+def _safe_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """pydantic's ValidationError.errors() carries the field path in `loc`
+    and the raw submitted value in `input` -- two separate keys, so
+    key-name-based redaction (which only looks at the key holding a value,
+    not a sibling key) never catches this shape on its own. Redact `input`
+    whenever any segment of `loc` looks like a secret field name."""
+    safe = []
+    for error in errors:
+        loc = error.get("loc") or ()
+        if any(_is_sensitive_key(str(segment)) for segment in loc) and "input" in error:
+            error = {**error, "input": "***REDACTED***"}
+        safe.append(error)
+    return safe
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -55,7 +71,9 @@ def register_exception_handlers(app: FastAPI) -> None:
         # Never echo back pydantic's raw error internals (which can quote
         # submitted values) to the client -- log them server-side instead,
         # correlated by request id.
-        logger.warning("request_validation_error", extra={"errors": exc.errors()})
+        logger.warning(
+            "request_validation_error", extra={"errors": _safe_validation_errors(exc.errors())}
+        )
         return JSONResponse(
             status_code=422,
             content={
