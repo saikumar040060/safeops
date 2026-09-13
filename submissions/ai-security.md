@@ -26,6 +26,35 @@ exfiltration, and scope deviation — independent of whether the tool
 itself is one the agent is normally allowed to use. Anything risky enough
 pauses for a human. Nothing executes silently.
 
+## Architecture diagram
+
+```mermaid
+flowchart TD
+    A[Agent proposes a tool call] --> G[ToolGateway]
+    G --> P{Permission}
+    P -- DENY / unregistered --> X1[FAILED, nothing runs]
+    P -- ALLOW / CONDITIONAL --> PE{Policy Engine}
+    PE -- BLOCK --> X2[BLOCKED, nothing runs]
+    PE -- ALLOW --> R{Risk Engine}
+    PE -- REQUIRE_APPROVAL --> R
+    R -- CRITICAL / high risk --> X3[BLOCKED + SecurityIncident, nothing runs]
+    R -- low risk, policy said ALLOW --> EXEC[Tool executes]
+    R -- low risk, policy said REQUIRE_APPROVAL --> WAIT[Waits for human]
+    WAIT --> H{Human decision}
+    H -- approve --> EXEC
+    H -- reject --> X4[REJECTED, nothing runs]
+    EXEC --> AUDIT[Immutable audit trail]
+    X1 --> AUDIT
+    X2 --> AUDIT
+    X3 --> AUDIT
+    X4 --> AUDIT
+```
+
+Risk Engine runs on the tool call's **context** (attached sources,
+objective), independent of whatever Permission/Policy already decided —
+this is why a directly-ALLOWed tool (`send_external_email` in path 3
+below) can still be blocked.
+
 ## The 3 paths (run live for this submission)
 
 **1 — Safe action → ALLOW**
@@ -64,6 +93,25 @@ Captured live from the risk assessment: `risk_level: CRITICAL`,
 EXTERNAL_COMMUNICATION]`. A `SecurityIncident` is created (`OPEN`,
 `CRITICAL`), and the underlying `ToolRequest` shows `DENIED` — the email
 tool never actually ran. Zero side effects.
+
+### Zero-side-effect proof (path 3)
+
+Not just "the response said BLOCKED" — verified directly against the
+database for this exact run:
+
+| Check | Result |
+|---|---|
+| `ExternalActionRequest.status` | `BLOCKED`, `error_code: ACTION_BLOCKED` |
+| `ToolRequest.status` | `DENIED` — the `send_external_email` tool implementation was never invoked |
+| `SecurityIncident` | created, `status: OPEN`, `severity: CRITICAL` |
+| `RiskAssessment` | `risk_level: CRITICAL`, `risk_score: 100`, `signals: [PROMPT_INJECTION, DATA_EXFILTRATION, EXTERNAL_COMMUNICATION]` |
+| Any email actually sent | No — the tool is a simulated no-op even when it *does* run, and here it never ran at all |
+| Any customer data exported | No — same reasoning, plus `export_customer_data` was never called in this path either |
+
+This is the difference between "the agent said no" (an LLM's own
+judgment, which prompt injection specifically targets) and "the action
+never reached the code that would have done it" (a gateway decision,
+enforced regardless of what any LLM concluded).
 
 ## Demo script (for the video)
 

@@ -1,5 +1,7 @@
 # CALL-E submission — SafeOps + CALL-E
 
+Hackathon: **CALL-E: Your Code Is Calling** ([call-e.devpost.com](https://call-e.devpost.com)) — deadline **September 14, 2026, 11:45 PM SGT**.
+
 See [`submissions/README.md`](README.md) first for the shared disclosure,
 architecture diagram, and setup steps.
 
@@ -21,32 +23,22 @@ to pass through SafeOps' Permission → Policy → Risk → Approval pipeline
 before anything happens. CALL-E never executes a SafeOps action directly
 — it only answers a question.
 
-## Demo script (for the video)
+## Demo script — under 3 minutes (judges are not required to watch past this)
 
-1. **Setup shot**: show `integrations/calle/agent.py` — highlight that
-   `submit_call_outcome_to_safeops()` is the only place a call's result
-   becomes a SafeOps action, and it goes through the same
-   `SafeOpsClient.submit_action()` every other integration uses.
-2. **Run the real call**:
-   ```bash
-   python integrations/calle/agent.py
-   ```
-   CALL-E calls the demo phone number and asks whether to proceed with a
-   $750 refund for a duplicate payment. Answer "yes" on the call.
-3. **Show the result**: the script prints CALL-E's structured result,
-   then SafeOps' response — `REQUIRES_APPROVAL`, because $750 crosses
-   this policy's threshold, exactly like the internal and MCP refund
-   demos. Cut to the dashboard Approval Center.
-4. **Approve it**, show the refund reach `EXECUTED` exactly once in the
-   execution timeline, with the call transcript visible as the attached
-   (untrusted) source on that step.
-5. **Malicious variant** (no live call needed, deterministic):
-   ```bash
-   python integrations/calle/demo_malicious.py
-   ```
-   Simulates a manipulated call transcript trying to get the agent to
-   export customer data. Show the terminal output (`BLOCKED`) and the
-   Security Center incident it creates.
+Since a live phone call itself can take 30–60+ seconds and isn't
+scriptable to a fixed length, this script leans on **pre-recorded / cut
+footage** from the verified live run below rather than dialing on
+camera — that keeps the total under 3 minutes reliably.
+
+| Time | Content |
+|---|---|
+| 0:00–0:20 | **Pitch, fast**: "CALL-E gives code a phone line. A phone call is unstructured, human, and can be adversarial — exactly the kind of input a security system should never trust blindly. This is CALL-E wired to SafeOps, an independent authorization layer, so a call's outcome still has to be approved before anything happens." |
+| 0:20–0:35 | **Code shot**: `integrations/calle/agent.py` — `submit_call_outcome_to_safeops()` is the only place a call's result becomes a SafeOps action, via the same `SafeOpsClient.submit_action()` every other integration uses. |
+| 0:35–1:20 | **Cut to the real call recording/transcript**: CALL-E asks the customer to confirm a $750 duplicate-payment refund; customer confirms twice ("Yeah. Go ahead." → re-confirmed "Yes. Yeah. Right."). |
+| 1:20–1:45 | **Show SafeOps response**: terminal output — `REQUIRES_APPROVAL`. Cut to the dashboard Approval Center showing the pending request with the call transcript attached as its (untrusted) source. |
+| 1:45–2:10 | **Approve it**: show the execution timeline reach `EXECUTED`, exactly once. |
+| 2:10–2:40 | **Malicious variant** (deterministic, fast to show): `python integrations/calle/demo_malicious.py` — terminal shows `BLOCKED`; cut to the Security Center incident it creates. |
+| 2:40–3:00 | **Close**: same SafeOps authorization boundary as the MCP and Strands submissions — one security model behind three different ways an agent can act. |
 
 ## Setup instructions specific to this submission
 
@@ -174,5 +166,26 @@ never hardcoded. Regression tests: `integrations/calle/test_agent.py`
 (7 tests, all passing).
 
 - Code: `integrations/calle/`, feature originally committed at `beb41de`;
-  this bug fix, its regression tests, and this document were committed
-  together in the following commit.
+  the payment_id bug fix, its regression tests, and the live-run write-up
+  above were committed together at `ae429cb`.
+
+## PR checklist (required for submission — not yet done)
+
+The hackathon requires opening a pull request against the **public**
+repo `https://github.com/CALLE-AI/awesome-phone-call-agents`, following
+that repo's own README for the correct contribution area, and providing
+the PR URL on the Devpost submission form. None of this has been done
+yet. Steps:
+
+- [ ] Read `CALLE-AI/awesome-phone-call-agents`' README for the exact
+      contribution format/directory it expects (this repo is external —
+      not inspected yet).
+- [ ] Fork it, add an entry for this project (name, one-line description,
+      link back to `saikumar/safeops` and/or a demo video).
+- [ ] Confirm whether `integrations/calle/` needs to be public for the
+      linked entry to be useful to reviewers — see "Repository visibility"
+      in `submissions/README.md`.
+- [ ] Open the PR, get its URL.
+- [ ] Paste that PR URL into the Devpost submission form (`call-e.devpost.com`).
+- [ ] Provide the email address associated with your CALL-E account on
+      the submission form (separate requirement, not code-related).

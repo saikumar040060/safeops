@@ -5,6 +5,7 @@ Three submissions, one underlying system:
 - [`aws-strands.md`](aws-strands.md) — AWS Strands "Agents for Humans" hackathon
 - [`calle.md`](calle.md) — CALL-E "Your Code Is Calling" hackathon
 - [`ai-security.md`](ai-security.md) — AI Security hackathon
+- [`CHECKLIST.md`](CHECKLIST.md) — **start here before actually submitting**: real requirements pulled from each hackathon's rules page, checked against current assets, with what's still missing
 
 ## Disclosure (read this first)
 
