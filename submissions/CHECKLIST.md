@@ -38,8 +38,8 @@ Source: [call-e.devpost.com/rules](https://call-e.devpost.com/rules)
 | Requirement | Status | Notes |
 |---|---|---|
 | Functional software using CALL-E API/SDK | ✅ Done, live-verified | Two real outbound calls, full approval → execution loop |
-| **Open a PR to `github.com/CALLE-AI/awesome-phone-call-agents`** | ❌ **Not done** | Full checklist in `submissions/calle.md` "PR checklist" section — this repo's own README hasn't even been inspected yet |
-| Provide the PR URL on the submission form | ❌ Not done | Depends on the PR above |
+| **Open a PR to `github.com/CALLE-AI/awesome-phone-call-agents`** | ✅ **Opened** | [PR #519](https://github.com/CALLE-AI/awesome-phone-call-agents/pull/519) — one-line entry added to their README `### Apps` section (their own `scripts/validate_repository.py` passed before pushing); awaiting maintainer review/merge |
+| Provide the PR URL on the submission form | ⏳ Ready to provide | https://github.com/CALLE-AI/awesome-phone-call-agents/pull/519 |
 | Video, under 3 minutes, public on YouTube/Vimeo | ⏳ Script ready, **not recorded/uploaded** | Timed script in `submissions/calle.md` |
 | No third-party trademarks/copyrighted music in video | ⚠️ Keep in mind when recording | Not a code issue |
 | Written description | ✅ Done | `submissions/calle.md` |
