@@ -35,7 +35,14 @@ SAFEOPS_API_BASE_URL        e.g. http://localhost:8000/api
 SAFEOPS_INTEGRATION_TOKEN   bearer token for an INTEGRATION principal
 SAFEOPS_AGENT_ID            the SafeOps agent UUID this integration acts
                             for (must be mapped via IntegrationAgentMapping)
+CALLE_PAYMENT_ID            payment to confirm/refund, default PAY-9003
+CALLE_CUSTOMER_ID           customer on that payment, default CUST-1001
+CALLE_REFUND_AMOUNT         default confirmed amount, default 750.00
 ```
+
+`CALLE_API_KEY` can also be replaced with the official CALL-E CLI's
+browser OAuth flow (`calle auth login`) if you'd rather not manage a raw
+API key -- this was in fact how the live verification below was run.
 
 ## Demo 1 -- real live call, refund confirmation
 
@@ -81,9 +88,12 @@ instead of a support ticket.
 - `build_calle_client()` constructs successfully without a real key
   (`httpx.Client` construction doesn't authenticate until first request).
 
-**Not yet run:** the actual live phone call in `agent.py`. That needs a
-real `CALLE_API_KEY` and a real phone number to call, neither available
-in this environment.
+**Run live end to end since**: two real outbound calls placed and
+answered, full `REQUIRE_APPROVAL` → human approval → `EXECUTED` (exactly
+once) loop verified against the real SafeOps API, plus a real
+voicemail/no-answer case and a real already-refunded-payment case, both
+handled with zero unsafe side effects. Full detail, transcripts, and IDs:
+[`submissions/calle.md`](../submissions/calle.md).
 
 ## Known limitations
 
