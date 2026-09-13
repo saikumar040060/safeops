@@ -1,5 +1,11 @@
 # SafeOps
 
+## September 13 Wasmer hackathon extension
+
+See [SafeOps / Wasmer Containment Lab](integrations/wasmer/README.md) for the new
+Wasmer-backed tool, five-case real sandbox demo, evidence, and today's work disclosure.
+The platform below predates the event. The extension does not sandbox all existing tools.
+
 SafeOps is a runtime security and governance layer that sits between
 autonomous AI agents (internal or external) and the systems they control.
 Agents never execute a tool call directly — every proposed action passes

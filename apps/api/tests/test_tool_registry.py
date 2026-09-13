@@ -13,6 +13,7 @@ EXPECTED_TOOL_NAMES = {
     "deploy_production",
     "export_customer_data",
     "send_external_email",
+    "wasmer_analyze",
 }
 
 

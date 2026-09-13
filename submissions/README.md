@@ -1,5 +1,11 @@
 # Hackathon submissions — shared material
 
+**September 13 update:** the new [Wasmer submission](wasmer-2026-09-13.md) and
+[containment lab](../integrations/wasmer/README.md) add real SDK integration and new
+tests to the existing core. The older AI Security material below describes the baseline,
+not the new extension. The repository is now public and has an Apache-2.0 LICENSE;
+the older repository-status notes below are historical.
+
 Three submissions, one underlying system:
 
 - [`aws-strands.md`](aws-strands.md) — AWS Strands "Agents for Humans" hackathon

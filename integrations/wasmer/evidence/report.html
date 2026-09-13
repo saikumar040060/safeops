@@ -1,0 +1,306 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SafeOps · Wasmer evidence</title><style>
+:root{color-scheme:dark;font-family:ui-sans-serif,system-ui,sans-serif;color:#e7edf7;background:#0c1420}
+*{box-sizing:border-box}body{margin:0}main{max-width:1100px;margin:auto;padding:48px 28px 64px}
+.eyebrow{color:#79e7bb;letter-spacing:.15em;font-size:12px;font-weight:750;text-transform:uppercase}
+h1{font-size:48px;letter-spacing:-.045em;line-height:1.08;margin:20px 0}
+.intro{color:#adbbcc;max-width:770px;font-size:19px;line-height:1.6}.banner{border:1px solid #2c6253;background:#122f29;padding:20px 24px;border-radius:12px;margin:28px 0}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:28px 0}.stat{padding:22px;background:#162231;border-radius:12px}.stat strong{font-size:33px;display:block;color:#79e7bb}.stat span{color:#adbbcc;font-size:14px}
+article{background:#131f2d;border:1px solid #27384b;padding:24px;margin:14px 0;border-radius:12px}.casehead{display:flex;align-items:center;justify-content:space-between;gap:16px}h2{font-size:18px;margin:0}.badge{font:11px ui-monospace,monospace;padding:7px 10px;background:#213a35;color:#8bf1c6;border-radius:5px}p{line-height:1.65;color:#adbbcc}summary{cursor:pointer;color:#82bdff;padding:12px 0}pre{overflow:auto;white-space:pre-wrap;font-size:12px;line-height:1.6;background:#0b131e;padding:20px;border-radius:8px}a{color:#82bdff}footer{margin-top:30px;color:#adbbcc;font-size:13px}.limits{border-left:3px solid #e8b568;padding:0 20px;margin:30px 0}
+@media(max-width:650px){h1{font-size:34px}.stats{grid-template-columns:1fr}.casehead{align-items:flex-start;flex-direction:column}}
+</style><main><div class="eyebrow">SafeOps / Wasmer containment lab · Verified run</div>
+<h1>Check the action.<br>Contain the execution.</h1>
+<p class="intro">A permitted tool can still behave badly. This lab pairs SafeOps authorization with real Wasmer isolation, then tests both against controlled adversarial fixtures.</p>
+<div class="banner"><b>Positive controls matter.</b> The host could read the synthetic secret and connect to the local listener. The Wasmer guest could do neither.</div>
+<div class="stats"><div class="stat"><strong>5 / 5</strong><span>Real integration scenarios passed</span></div><div class="stat"><strong>389</strong><span>Backend regression tests passed</span></div><div class="stat"><strong>0</strong><span>Guest connections received by the host listener</span></div></div>
+<p>Recorded run: 2026-09-13T22:00:57.154619+00:00 · wasmer-sdk 0.2.1 · Python WASIX 3.13.18</p>
+<article><div class="casehead"><h2>01 Authorized analysis</h2>
+    <span class="badge">EXECUTED</span></div>
+    <p>Real Wasmer execution completed. · 306 ms</p>
+    <details><summary>Inspect result and ordered audit events</summary><pre>{
+  &quot;name&quot;: &quot;01 Authorized analysis&quot;,
+  &quot;elapsed_ms&quot;: 306,
+  &quot;result&quot;: {
+    &quot;status&quot;: &quot;EXECUTED&quot;,
+    &quot;tool_name&quot;: &quot;wasmer_analyze&quot;,
+    &quot;tool_result&quot;: {
+      &quot;runtime&quot;: &quot;wasmer-sdk&quot;,
+      &quot;package&quot;: &quot;python/python@=3.13.18&quot;,
+      &quot;input_sha256&quot;: &quot;3182adfa46f12cc70806781d5ddd2f9335d7c10580c1d718b5e9559647d39d39&quot;,
+      &quot;result&quot;: {
+        &quot;rows&quot;: 2,
+        &quot;total&quot;: &quot;20.00&quot;,
+        &quot;currency&quot;: &quot;fixture units&quot;
+      }
+    },
+    &quot;decision&quot;: &quot;ALLOW&quot;,
+    &quot;reason&quot;: null,
+    &quot;matched_policy&quot;: null,
+    &quot;policy_id&quot;: null,
+    &quot;approval_request_id&quot;: null,
+    &quot;risk_score&quot;: 0,
+    &quot;risk_level&quot;: &quot;LOW&quot;,
+    &quot;risk_signals&quot;: []
+  },
+  &quot;events&quot;: [
+    {
+      &quot;sequence&quot;: 1,
+      &quot;type&quot;: &quot;TOOL_REQUESTED&quot;
+    },
+    {
+      &quot;sequence&quot;: 2,
+      &quot;type&quot;: &quot;PERMISSION_CHECKED&quot;
+    },
+    {
+      &quot;sequence&quot;: 3,
+      &quot;type&quot;: &quot;RISK_ASSESSMENT_STARTED&quot;
+    },
+    {
+      &quot;sequence&quot;: 4,
+      &quot;type&quot;: &quot;RISK_ASSESSED&quot;
+    },
+    {
+      &quot;sequence&quot;: 5,
+      &quot;type&quot;: &quot;ACTION_ALLOWED&quot;
+    },
+    {
+      &quot;sequence&quot;: 6,
+      &quot;type&quot;: &quot;TOOL_EXECUTED&quot;
+    }
+  ]
+}</pre></details></article><article><div class="casehead"><h2>02 Prompt injection blocked before sandbox</h2>
+    <span class="badge">BLOCKED</span></div>
+    <p>Blocked by risk engine (score=100) · 22 ms</p>
+    <details><summary>Inspect result and ordered audit events</summary><pre>{
+  &quot;name&quot;: &quot;02 Prompt injection blocked before sandbox&quot;,
+  &quot;elapsed_ms&quot;: 22,
+  &quot;result&quot;: {
+    &quot;status&quot;: &quot;BLOCKED&quot;,
+    &quot;tool_name&quot;: &quot;wasmer_analyze&quot;,
+    &quot;tool_result&quot;: null,
+    &quot;decision&quot;: &quot;BLOCK&quot;,
+    &quot;reason&quot;: &quot;Blocked by risk engine (score=100)&quot;,
+    &quot;matched_policy&quot;: null,
+    &quot;policy_id&quot;: null,
+    &quot;approval_request_id&quot;: null,
+    &quot;risk_score&quot;: 100,
+    &quot;risk_level&quot;: &quot;CRITICAL&quot;,
+    &quot;risk_signals&quot;: [
+      &quot;PROMPT_INJECTION&quot;,
+      &quot;DATA_EXFILTRATION&quot;
+    ]
+  },
+  &quot;events&quot;: [
+    {
+      &quot;sequence&quot;: 1,
+      &quot;type&quot;: &quot;TOOL_REQUESTED&quot;
+    },
+    {
+      &quot;sequence&quot;: 2,
+      &quot;type&quot;: &quot;PERMISSION_CHECKED&quot;
+    },
+    {
+      &quot;sequence&quot;: 3,
+      &quot;type&quot;: &quot;RISK_ASSESSMENT_STARTED&quot;
+    },
+    {
+      &quot;sequence&quot;: 4,
+      &quot;type&quot;: &quot;RISK_SIGNAL_DETECTED&quot;
+    },
+    {
+      &quot;sequence&quot;: 5,
+      &quot;type&quot;: &quot;RISK_SIGNAL_DETECTED&quot;
+    },
+    {
+      &quot;sequence&quot;: 6,
+      &quot;type&quot;: &quot;RISK_ASSESSED&quot;
+    },
+    {
+      &quot;sequence&quot;: 7,
+      &quot;type&quot;: &quot;RISK_ESCALATED&quot;
+    },
+    {
+      &quot;sequence&quot;: 8,
+      &quot;type&quot;: &quot;ACTION_BLOCKED_BY_RISK&quot;
+    },
+    {
+      &quot;sequence&quot;: 9,
+      &quot;type&quot;: &quot;SECURITY_INCIDENT_CREATED&quot;
+    }
+  ]
+}</pre></details></article><article><div class="casehead"><h2>03 Missing capability denied</h2>
+    <span class="badge">BLOCKED</span></div>
+    <p>Agent does not have permission · 6 ms</p>
+    <details><summary>Inspect result and ordered audit events</summary><pre>{
+  &quot;name&quot;: &quot;03 Missing capability denied&quot;,
+  &quot;elapsed_ms&quot;: 6,
+  &quot;result&quot;: {
+    &quot;status&quot;: &quot;BLOCKED&quot;,
+    &quot;tool_name&quot;: &quot;wasmer_analyze&quot;,
+    &quot;tool_result&quot;: null,
+    &quot;decision&quot;: &quot;DENY&quot;,
+    &quot;reason&quot;: &quot;Agent does not have permission&quot;,
+    &quot;matched_policy&quot;: null,
+    &quot;policy_id&quot;: null,
+    &quot;approval_request_id&quot;: null,
+    &quot;risk_score&quot;: null,
+    &quot;risk_level&quot;: null,
+    &quot;risk_signals&quot;: null
+  },
+  &quot;events&quot;: [
+    {
+      &quot;sequence&quot;: 1,
+      &quot;type&quot;: &quot;TOOL_REQUESTED&quot;
+    },
+    {
+      &quot;sequence&quot;: 2,
+      &quot;type&quot;: &quot;PERMISSION_CHECKED&quot;
+    },
+    {
+      &quot;sequence&quot;: 3,
+      &quot;type&quot;: &quot;ACTION_DENIED&quot;
+    }
+  ]
+}</pre></details></article><article><div class="casehead"><h2>04 Compromised-tool containment probe</h2>
+    <span class="badge">EXECUTED</span></div>
+    <p>Real Wasmer execution completed. · 132 ms</p>
+    <details><summary>Inspect result and ordered audit events</summary><pre>{
+  &quot;name&quot;: &quot;04 Compromised-tool containment probe&quot;,
+  &quot;elapsed_ms&quot;: 132,
+  &quot;result&quot;: {
+    &quot;status&quot;: &quot;EXECUTED&quot;,
+    &quot;tool_name&quot;: &quot;wasmer_analyze&quot;,
+    &quot;tool_result&quot;: {
+      &quot;runtime&quot;: &quot;wasmer-sdk&quot;,
+      &quot;package&quot;: &quot;python/python@=3.13.18&quot;,
+      &quot;input_sha256&quot;: &quot;84b73df10a8e16854608a0c048fa6dc9f5481475dfd94a90def754dfc46d8153&quot;,
+      &quot;result&quot;: {
+        &quot;host_file_blocked&quot;: true,
+        &quot;network_blocked&quot;: true,
+        &quot;host_received_guest_connection&quot;: false,
+        &quot;positive_controls&quot;: {
+          &quot;host_can_read_canary&quot;: true,
+          &quot;host_can_connect_listener&quot;: true
+        }
+      }
+    },
+    &quot;decision&quot;: &quot;ALLOW&quot;,
+    &quot;reason&quot;: null,
+    &quot;matched_policy&quot;: null,
+    &quot;policy_id&quot;: null,
+    &quot;approval_request_id&quot;: null,
+    &quot;risk_score&quot;: 0,
+    &quot;risk_level&quot;: &quot;LOW&quot;,
+    &quot;risk_signals&quot;: []
+  },
+  &quot;events&quot;: [
+    {
+      &quot;sequence&quot;: 1,
+      &quot;type&quot;: &quot;TOOL_REQUESTED&quot;
+    },
+    {
+      &quot;sequence&quot;: 2,
+      &quot;type&quot;: &quot;PERMISSION_CHECKED&quot;
+    },
+    {
+      &quot;sequence&quot;: 3,
+      &quot;type&quot;: &quot;RISK_ASSESSMENT_STARTED&quot;
+    },
+    {
+      &quot;sequence&quot;: 4,
+      &quot;type&quot;: &quot;RISK_ASSESSED&quot;
+    },
+    {
+      &quot;sequence&quot;: 5,
+      &quot;type&quot;: &quot;ACTION_ALLOWED&quot;
+    },
+    {
+      &quot;sequence&quot;: 6,
+      &quot;type&quot;: &quot;TOOL_EXECUTED&quot;
+    }
+  ]
+}</pre></details></article><article><div class="casehead"><h2>05 Approval gate pauses execution</h2>
+    <span class="badge">REQUIRES_APPROVAL</span></div>
+    <p>Matched policy &#x27;WASMER_LAB_APPROVAL&#x27; · 32 ms</p>
+    <details><summary>Inspect result and ordered audit events</summary><pre>{
+  &quot;name&quot;: &quot;05 Approval gate pauses execution&quot;,
+  &quot;elapsed_ms&quot;: 32,
+  &quot;result&quot;: {
+    &quot;status&quot;: &quot;REQUIRES_APPROVAL&quot;,
+    &quot;tool_name&quot;: &quot;wasmer_analyze&quot;,
+    &quot;tool_result&quot;: null,
+    &quot;decision&quot;: &quot;REQUIRE_APPROVAL&quot;,
+    &quot;reason&quot;: &quot;Matched policy &#x27;WASMER_LAB_APPROVAL&#x27;&quot;,
+    &quot;matched_policy&quot;: &quot;WASMER_LAB_APPROVAL&quot;,
+    &quot;policy_id&quot;: &quot;2d2a4931-5548-42c6-af54-9b7cf47a653f&quot;,
+    &quot;approval_request_id&quot;: &quot;99e8d3ff-811d-45a2-80a5-7b8459b70f60&quot;,
+    &quot;risk_score&quot;: 0,
+    &quot;risk_level&quot;: &quot;LOW&quot;,
+    &quot;risk_signals&quot;: []
+  },
+  &quot;events&quot;: [
+    {
+      &quot;sequence&quot;: 1,
+      &quot;type&quot;: &quot;TOOL_REQUESTED&quot;
+    },
+    {
+      &quot;sequence&quot;: 2,
+      &quot;type&quot;: &quot;PERMISSION_CHECKED&quot;
+    },
+    {
+      &quot;sequence&quot;: 3,
+      &quot;type&quot;: &quot;POLICY_EVALUATION_STARTED&quot;
+    },
+    {
+      &quot;sequence&quot;: 4,
+      &quot;type&quot;: &quot;POLICY_MATCHED&quot;
+    },
+    {
+      &quot;sequence&quot;: 5,
+      &quot;type&quot;: &quot;POLICY_APPROVAL_REQUIRED&quot;
+    },
+    {
+      &quot;sequence&quot;: 6,
+      &quot;type&quot;: &quot;RISK_ASSESSMENT_STARTED&quot;
+    },
+    {
+      &quot;sequence&quot;: 7,
+      &quot;type&quot;: &quot;RISK_ASSESSED&quot;
+    },
+    {
+      &quot;sequence&quot;: 8,
+      &quot;type&quot;: &quot;APPROVAL_REQUESTED&quot;
+    }
+  ],
+  &quot;scripted_approval_result&quot;: {
+    &quot;status&quot;: &quot;EXECUTED&quot;,
+    &quot;approval_id&quot;: &quot;99e8d3ff-811d-45a2-80a5-7b8459b70f60&quot;,
+    &quot;approval_status&quot;: &quot;EXECUTED&quot;,
+    &quot;tool_result&quot;: {
+      &quot;runtime&quot;: &quot;wasmer-sdk&quot;,
+      &quot;package&quot;: &quot;python/python@=3.13.18&quot;,
+      &quot;input_sha256&quot;: &quot;3182adfa46f12cc70806781d5ddd2f9335d7c10580c1d718b5e9559647d39d39&quot;,
+      &quot;result&quot;: {
+        &quot;rows&quot;: 2,
+        &quot;total&quot;: &quot;20.00&quot;,
+        &quot;currency&quot;: &quot;fixture units&quot;
+      }
+    },
+    &quot;reason&quot;: null
+  },
+  &quot;post_approval_events&quot;: [
+    &quot;TOOL_REQUESTED&quot;,
+    &quot;PERMISSION_CHECKED&quot;,
+    &quot;POLICY_EVALUATION_STARTED&quot;,
+    &quot;POLICY_MATCHED&quot;,
+    &quot;POLICY_APPROVAL_REQUIRED&quot;,
+    &quot;RISK_ASSESSMENT_STARTED&quot;,
+    &quot;RISK_ASSESSED&quot;,
+    &quot;APPROVAL_REQUESTED&quot;,
+    &quot;APPROVAL_APPROVED&quot;,
+    &quot;APPROVED_ACTION_EXECUTION_STARTED&quot;,
+    &quot;APPROVED_ACTION_EXECUTED&quot;
+  ]
+}</pre></details></article>
+<div class="limits"><h2>Scope and limitations</h2><p>This is a scripted agent/approval demonstration against local owned fixtures, using the actual gateway, PostgreSQL, and Wasmer SDK. It is not a live LLM session. These probes verify specific boundaries, not universal injection detection or a proof against all sandbox escapes. The extension contains only the new analysis tool.</p></div>
+<footer><b>Build disclosure:</b> SafeOps core predates the event (baseline e0a27bc). The Wasmer tool, probes, regression cases, demonstration, and this evidence package are September 13 work. Eligibility and remote arrangements require organizer confirmation.<p><a href="results.json">Raw results</a> · <a href="walkthrough.mp4">Captioned evidence walkthrough</a> · <a href="../README.md">Reproduction instructions</a></p></footer></main></html>

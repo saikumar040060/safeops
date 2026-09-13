@@ -1,5 +1,9 @@
 # AI Security submission — SafeOps
 
+**Historical baseline write-up.** For today's new work, use
+[SafeOps / Wasmer Containment Lab](wasmer-2026-09-13.md). The core described here
+predates the event; the Wasmer extension is separately disclosed.
+
 See [`submissions/README.md`](README.md) first for the shared disclosure
 (**this submission is entirely pre-existing SafeOps core, no new code**),
 architecture diagram, and setup steps.

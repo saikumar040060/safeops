@@ -1,0 +1,6 @@
+Validation recorded September 13, 2026
+Full backend suite: 389 passed, 3 dependency deprecation warnings, 20.07 seconds.
+New regression cases: 10.
+Real gateway + Wasmer integration demo: 5 of 5 passed.
+Changed Python files: ruff check passed.
+Walkthrough: 72-second captioned presentation of results.json, not a live screen recording.

@@ -8,6 +8,7 @@ from app.tools.devops import (
 )
 from app.tools.payments import RefundPaymentTool
 from app.tools.registry import ToolNotFoundError, ToolRegistry
+from app.tools.wasmer_analysis import WasmerAnalysisTool
 
 tool_registry = ToolRegistry()
 for tool_cls in (
@@ -21,6 +22,7 @@ for tool_cls in (
     DeployProductionTool,
     ExportCustomerDataTool,
     SendExternalEmailTool,
+    WasmerAnalysisTool,
 ):
     tool_registry.register(tool_cls())
 
