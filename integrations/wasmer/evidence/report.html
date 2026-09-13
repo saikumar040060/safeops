@@ -13,13 +13,13 @@ article{background:#131f2d;border:1px solid #27384b;padding:24px;margin:14px 0;b
 <p class="intro">A permitted tool can still behave badly. This lab pairs SafeOps authorization with real Wasmer isolation, then tests both against controlled adversarial fixtures.</p>
 <div class="banner"><b>Positive controls matter.</b> The host could read the synthetic secret and connect to the local listener. The Wasmer guest could do neither.</div>
 <div class="stats"><div class="stat"><strong>5 / 5</strong><span>Real integration scenarios passed</span></div><div class="stat"><strong>389</strong><span>Backend regression tests passed</span></div><div class="stat"><strong>0</strong><span>Guest connections received by the host listener</span></div></div>
-<p>Recorded run: 2026-09-13T22:00:57.154619+00:00 · wasmer-sdk 0.2.1 · Python WASIX 3.13.18</p>
+<p>Recorded run: 2026-09-13T22:42:08.754764+00:00 · wasmer-sdk 0.2.1 · Python WASIX 3.13.18</p>
 <article><div class="casehead"><h2>01 Authorized analysis</h2>
     <span class="badge">EXECUTED</span></div>
-    <p>Real Wasmer execution completed. · 306 ms</p>
+    <p>Real Wasmer execution completed. · 891 ms</p>
     <details><summary>Inspect result and ordered audit events</summary><pre>{
   &quot;name&quot;: &quot;01 Authorized analysis&quot;,
-  &quot;elapsed_ms&quot;: 306,
+  &quot;elapsed_ms&quot;: 891,
   &quot;result&quot;: {
     &quot;status&quot;: &quot;EXECUTED&quot;,
     &quot;tool_name&quot;: &quot;wasmer_analyze&quot;,
@@ -70,10 +70,10 @@ article{background:#131f2d;border:1px solid #27384b;padding:24px;margin:14px 0;b
   ]
 }</pre></details></article><article><div class="casehead"><h2>02 Prompt injection blocked before sandbox</h2>
     <span class="badge">BLOCKED</span></div>
-    <p>Blocked by risk engine (score=100) · 22 ms</p>
+    <p>Blocked by risk engine (score=100) · 77 ms</p>
     <details><summary>Inspect result and ordered audit events</summary><pre>{
   &quot;name&quot;: &quot;02 Prompt injection blocked before sandbox&quot;,
-  &quot;elapsed_ms&quot;: 22,
+  &quot;elapsed_ms&quot;: 77,
   &quot;result&quot;: {
     &quot;status&quot;: &quot;BLOCKED&quot;,
     &quot;tool_name&quot;: &quot;wasmer_analyze&quot;,
@@ -130,10 +130,10 @@ article{background:#131f2d;border:1px solid #27384b;padding:24px;margin:14px 0;b
   ]
 }</pre></details></article><article><div class="casehead"><h2>03 Missing capability denied</h2>
     <span class="badge">BLOCKED</span></div>
-    <p>Agent does not have permission · 6 ms</p>
+    <p>Agent does not have permission · 29 ms</p>
     <details><summary>Inspect result and ordered audit events</summary><pre>{
   &quot;name&quot;: &quot;03 Missing capability denied&quot;,
-  &quot;elapsed_ms&quot;: 6,
+  &quot;elapsed_ms&quot;: 29,
   &quot;result&quot;: {
     &quot;status&quot;: &quot;BLOCKED&quot;,
     &quot;tool_name&quot;: &quot;wasmer_analyze&quot;,
@@ -163,10 +163,10 @@ article{background:#131f2d;border:1px solid #27384b;padding:24px;margin:14px 0;b
   ]
 }</pre></details></article><article><div class="casehead"><h2>04 Compromised-tool containment probe</h2>
     <span class="badge">EXECUTED</span></div>
-    <p>Real Wasmer execution completed. · 132 ms</p>
+    <p>Real Wasmer execution completed. · 416 ms</p>
     <details><summary>Inspect result and ordered audit events</summary><pre>{
   &quot;name&quot;: &quot;04 Compromised-tool containment probe&quot;,
-  &quot;elapsed_ms&quot;: 132,
+  &quot;elapsed_ms&quot;: 416,
   &quot;result&quot;: {
     &quot;status&quot;: &quot;EXECUTED&quot;,
     &quot;tool_name&quot;: &quot;wasmer_analyze&quot;,
@@ -221,10 +221,10 @@ article{background:#131f2d;border:1px solid #27384b;padding:24px;margin:14px 0;b
   ]
 }</pre></details></article><article><div class="casehead"><h2>05 Approval gate pauses execution</h2>
     <span class="badge">REQUIRES_APPROVAL</span></div>
-    <p>Matched policy &#x27;WASMER_LAB_APPROVAL&#x27; · 32 ms</p>
+    <p>Matched policy &#x27;WASMER_LAB_APPROVAL&#x27; · 100 ms</p>
     <details><summary>Inspect result and ordered audit events</summary><pre>{
   &quot;name&quot;: &quot;05 Approval gate pauses execution&quot;,
-  &quot;elapsed_ms&quot;: 32,
+  &quot;elapsed_ms&quot;: 100,
   &quot;result&quot;: {
     &quot;status&quot;: &quot;REQUIRES_APPROVAL&quot;,
     &quot;tool_name&quot;: &quot;wasmer_analyze&quot;,
@@ -232,8 +232,8 @@ article{background:#131f2d;border:1px solid #27384b;padding:24px;margin:14px 0;b
     &quot;decision&quot;: &quot;REQUIRE_APPROVAL&quot;,
     &quot;reason&quot;: &quot;Matched policy &#x27;WASMER_LAB_APPROVAL&#x27;&quot;,
     &quot;matched_policy&quot;: &quot;WASMER_LAB_APPROVAL&quot;,
-    &quot;policy_id&quot;: &quot;2d2a4931-5548-42c6-af54-9b7cf47a653f&quot;,
-    &quot;approval_request_id&quot;: &quot;99e8d3ff-811d-45a2-80a5-7b8459b70f60&quot;,
+    &quot;policy_id&quot;: &quot;2b2fd0c2-b95e-4878-845c-ac09812db1b7&quot;,
+    &quot;approval_request_id&quot;: &quot;c85d7962-6343-4e57-9ba6-4e9fdea42737&quot;,
     &quot;risk_score&quot;: 0,
     &quot;risk_level&quot;: &quot;LOW&quot;,
     &quot;risk_signals&quot;: []
@@ -274,7 +274,7 @@ article{background:#131f2d;border:1px solid #27384b;padding:24px;margin:14px 0;b
   ],
   &quot;scripted_approval_result&quot;: {
     &quot;status&quot;: &quot;EXECUTED&quot;,
-    &quot;approval_id&quot;: &quot;99e8d3ff-811d-45a2-80a5-7b8459b70f60&quot;,
+    &quot;approval_id&quot;: &quot;c85d7962-6343-4e57-9ba6-4e9fdea42737&quot;,
     &quot;approval_status&quot;: &quot;EXECUTED&quot;,
     &quot;tool_result&quot;: {
       &quot;runtime&quot;: &quot;wasmer-sdk&quot;,
@@ -303,4 +303,4 @@ article{background:#131f2d;border:1px solid #27384b;padding:24px;margin:14px 0;b
   ]
 }</pre></details></article>
 <div class="limits"><h2>Scope and limitations</h2><p>This is a scripted agent/approval demonstration against local owned fixtures, using the actual gateway, PostgreSQL, and Wasmer SDK. It is not a live LLM session. These probes verify specific boundaries, not universal injection detection or a proof against all sandbox escapes. The extension contains only the new analysis tool.</p></div>
-<footer><b>Build disclosure:</b> SafeOps core predates the event (baseline e0a27bc). The Wasmer tool, probes, regression cases, demonstration, and this evidence package are September 13 work. Eligibility and remote arrangements require organizer confirmation.<p><a href="results.json">Raw results</a> · <a href="walkthrough.mp4">Captioned evidence walkthrough</a> · <a href="../README.md">Reproduction instructions</a></p></footer></main></html>
+<footer><b>Build disclosure:</b> SafeOps core predates the event (baseline e0a27bc). The Wasmer tool, probes, regression cases, demonstration, and this evidence package are September 13 work. The event FAQ permits prior work/context; Luma specifies remote video submissions. Final submission fields remain unconfirmed.<p><a href="results.json">Raw results</a> · <a href="live-demo.mp4">Actual-run demo video (69 seconds)</a> · <a href="../README.md">Reproduction instructions</a></p></footer></main></html>

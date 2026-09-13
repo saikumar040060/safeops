@@ -1,0 +1,144 @@
+{
+  "format": "timestamped stdout recording",
+  "exit_code": 0,
+  "duration_seconds": 68.80545183399227,
+  "command": "SAFEOPS_PRESENTATION=1 python integrations/wasmer/demo.py",
+  "events": [
+    [
+      0.278,
+      "SAFEOPS / WASMER CONTAINMENT LAB\n"
+    ],
+    [
+      0.278,
+      "LIVE execution: real ToolGateway + PostgreSQL + wasmer-sdk 0.2.1\n"
+    ],
+    [
+      0.278,
+      "Agent requests and approver are scripted; targets are local fixtures.\n"
+    ],
+    [
+      0.278,
+      "New today: Wasmer tool and probes. SafeOps core predates the event.\n"
+    ],
+    [
+      0.278,
+      "Guest: python/python@=3.13.18 | no host mounts | no guest network\n"
+    ],
+    [
+      9.519,
+      "01 Authorized analysis: EXECUTED\n"
+    ],
+    [
+      9.519,
+      "{\n"
+    ],
+    [
+      9.519,
+      "  \"rows\": 2,\n"
+    ],
+    [
+      9.519,
+      "  \"total\": \"20.00\",\n"
+    ],
+    [
+      9.519,
+      "  \"currency\": \"fixture units\"\n"
+    ],
+    [
+      9.519,
+      "}\n"
+    ],
+    [
+      9.519,
+      "Audit: TOOL_REQUESTED -> PERMISSION_CHECKED -> RISK_ASSESSMENT_STARTED -> RISK_ASSESSED -> ACTION_ALLOWED -> TOOL_EXECUTED\n"
+    ],
+    [
+      19.623,
+      "02 Prompt injection blocked before sandbox: BLOCKED\n"
+    ],
+    [
+      19.623,
+      "Reason: Blocked by risk engine (score=100)\n"
+    ],
+    [
+      19.623,
+      "Audit: TOOL_REQUESTED -> PERMISSION_CHECKED -> RISK_ASSESSMENT_STARTED -> RISK_SIGNAL_DETECTED -> RISK_SIGNAL_DETECTED -> RISK_ASSESSED -> RISK_ESCALATED -> ACTION_BLOCKED_BY_RISK -> SECURITY_INCIDENT_CREATED\n"
+    ],
+    [
+      29.672,
+      "03 Missing capability denied: BLOCKED\n"
+    ],
+    [
+      29.672,
+      "Reason: Agent does not have permission\n"
+    ],
+    [
+      29.672,
+      "Audit: TOOL_REQUESTED -> PERMISSION_CHECKED -> ACTION_DENIED\n"
+    ],
+    [
+      40.126,
+      "04 Compromised-tool containment probe: EXECUTED\n"
+    ],
+    [
+      40.126,
+      "{\n"
+    ],
+    [
+      40.126,
+      "  \"host_file_blocked\": true,\n"
+    ],
+    [
+      40.126,
+      "  \"network_blocked\": true,\n"
+    ],
+    [
+      40.126,
+      "  \"host_received_guest_connection\": false,\n"
+    ],
+    [
+      40.126,
+      "  \"positive_controls\": {\n"
+    ],
+    [
+      40.126,
+      "    \"host_can_read_canary\": true,\n"
+    ],
+    [
+      40.126,
+      "    \"host_can_connect_listener\": true\n"
+    ],
+    [
+      40.126,
+      "  }\n"
+    ],
+    [
+      40.126,
+      "}\n"
+    ],
+    [
+      40.126,
+      "Audit: TOOL_REQUESTED -> PERMISSION_CHECKED -> RISK_ASSESSMENT_STARTED -> RISK_ASSESSED -> ACTION_ALLOWED -> TOOL_EXECUTED\n"
+    ],
+    [
+      50.264,
+      "05 Approval gate pauses execution: REQUIRES_APPROVAL\n"
+    ],
+    [
+      50.264,
+      "Reason: Matched policy 'WASMER_LAB_APPROVAL'\n"
+    ],
+    [
+      50.264,
+      "Audit: TOOL_REQUESTED -> PERMISSION_CHECKED -> POLICY_EVALUATION_STARTED -> POLICY_MATCHED -> POLICY_APPROVAL_REQUIRED -> RISK_ASSESSMENT_STARTED -> RISK_ASSESSED -> APPROVAL_REQUESTED\n"
+    ],
+    [
+      60.688,
+      "Scripted approver resumes real Wasmer execution: PASS\n"
+    ],
+    [
+      60.758,
+      "Evidence: integrations/wasmer/evidence/results.json\n"
+    ]
+  ]
+}

@@ -30,6 +30,14 @@ from sqlalchemy.orm import Session
 
 
 def main():
+    presentation = os.environ.get("SAFEOPS_PRESENTATION") == "1"
+    if presentation:
+        print("SAFEOPS / WASMER CONTAINMENT LAB", flush=True)
+        print("LIVE execution: real ToolGateway + PostgreSQL + wasmer-sdk 0.2.1", flush=True)
+        print("Agent requests and approver are scripted; targets are local fixtures.", flush=True)
+        print("New today: Wasmer tool and probes. SafeOps core predates the event.", flush=True)
+        print("Guest: python/python@=3.13.18 | no host mounts | no guest network", flush=True)
+        time.sleep(8)
     url = os.environ.get(
         "SAFEOPS_DEMO_DATABASE_URL",
         "postgresql+psycopg2://safeops:safeops@127.0.0.1:5433/safeops",
@@ -91,6 +99,13 @@ def main():
                 }
                 report["cases"].append(case)
                 print(f"{label}: {result.status}", flush=True)
+                if presentation:
+                    if result.tool_result:
+                        print(json.dumps(result.tool_result["result"], indent=2), flush=True)
+                    else:
+                        print(f"Reason: {result.reason}", flush=True)
+                    print("Audit: " + " -> ".join(e["type"] for e in case["events"]), flush=True)
+                    time.sleep(10)
                 return result, execution, case
 
             result, _, _ = execute("01 Authorized analysis", {"kind": "summary"})

@@ -1,6 +1,6 @@
 {
   "project": "SafeOps / Wasmer containment lab",
-  "generated_at": "2026-09-13T22:00:57.154619+00:00",
+  "generated_at": "2026-09-13T22:42:08.754764+00:00",
   "sdk": "wasmer-sdk==0.2.1",
   "guest_package": "python/python@=3.13.18",
   "agent_driver": "scripted tool proposals, not a live LLM",
@@ -8,7 +8,7 @@
   "cases": [
     {
       "name": "01 Authorized analysis",
-      "elapsed_ms": 306,
+      "elapsed_ms": 891,
       "result": {
         "status": "EXECUTED",
         "tool_name": "wasmer_analyze",
@@ -60,7 +60,7 @@
     },
     {
       "name": "02 Prompt injection blocked before sandbox",
-      "elapsed_ms": 22,
+      "elapsed_ms": 77,
       "result": {
         "status": "BLOCKED",
         "tool_name": "wasmer_analyze",
@@ -118,7 +118,7 @@
     },
     {
       "name": "03 Missing capability denied",
-      "elapsed_ms": 6,
+      "elapsed_ms": 29,
       "result": {
         "status": "BLOCKED",
         "tool_name": "wasmer_analyze",
@@ -149,7 +149,7 @@
     },
     {
       "name": "04 Compromised-tool containment probe",
-      "elapsed_ms": 132,
+      "elapsed_ms": 416,
       "result": {
         "status": "EXECUTED",
         "tool_name": "wasmer_analyze",
@@ -205,7 +205,7 @@
     },
     {
       "name": "05 Approval gate pauses execution",
-      "elapsed_ms": 32,
+      "elapsed_ms": 100,
       "result": {
         "status": "REQUIRES_APPROVAL",
         "tool_name": "wasmer_analyze",
@@ -213,8 +213,8 @@
         "decision": "REQUIRE_APPROVAL",
         "reason": "Matched policy 'WASMER_LAB_APPROVAL'",
         "matched_policy": "WASMER_LAB_APPROVAL",
-        "policy_id": "2d2a4931-5548-42c6-af54-9b7cf47a653f",
-        "approval_request_id": "99e8d3ff-811d-45a2-80a5-7b8459b70f60",
+        "policy_id": "2b2fd0c2-b95e-4878-845c-ac09812db1b7",
+        "approval_request_id": "c85d7962-6343-4e57-9ba6-4e9fdea42737",
         "risk_score": 0,
         "risk_level": "LOW",
         "risk_signals": []
@@ -255,7 +255,7 @@
       ],
       "scripted_approval_result": {
         "status": "EXECUTED",
-        "approval_id": "99e8d3ff-811d-45a2-80a5-7b8459b70f60",
+        "approval_id": "c85d7962-6343-4e57-9ba6-4e9fdea42737",
         "approval_status": "EXECUTED",
         "tool_result": {
           "runtime": "wasmer-sdk",

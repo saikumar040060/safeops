@@ -1,5 +1,10 @@
 # Submission readiness checklist
 
+**AI Security / Wasmer update, September 13:** use the verified
+[event-specific requirements audit](wasmer-requirements-audit.md). The AI Security
+unknown-event section and private-repository notes below are historical. They are not
+the current Wasmer submission requirements.
+
 Requirements below for **Agents for Humans** and **CALL-E** were pulled
 directly from their live Devpost rules pages during preparation (sources
 linked). Nothing here is guessed. **This file does not submit anything

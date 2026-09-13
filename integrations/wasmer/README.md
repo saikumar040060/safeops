@@ -5,13 +5,16 @@
 This is a new Wasmer integration and adversarial demonstration built on September 13,
 2026, on top of the pre-existing SafeOps platform. The baseline is commit `e0a27bc`.
 The original gateway, policy/risk/approval engines, audit database, and dashboard were
-built before the event. They are not claimed as hackathon-day work. Organizer acceptance
-of an extension to an existing project has not been confirmed.
+built before the event. They are not claimed as hackathon-day work. The event FAQ permits prior work/context when the demo shows work built on the day.
+See the [requirements audit](../../submissions/wasmer-requirements-audit.md) for current instructions.
 
 ## See the evidence
 
 - [Actual run results](evidence/results.json): real ToolGateway, Postgres, and Wasmer SDK.
 - [Readable evidence report](evidence/report.html): download and open in a browser.
+- [Actual-run demo video](evidence/live-demo.mp4): timestamped stdout recording of a fresh
+  real gateway/Wasmer run, rendered as terminal video. No slides.
+- [Raw timed recording](evidence/live-demo-transcript.json).
 - [Captioned evidence walkthrough](evidence/walkthrough.mp4): generated from the verified
   run, not a screen recording of a live agent. Re-run the command below for a live demo.
 - [New tool implementation](../../apps/api/app/tools/wasmer_analysis.py)

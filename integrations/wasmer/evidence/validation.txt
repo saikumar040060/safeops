@@ -4,3 +4,4 @@ New regression cases: 10.
 Real gateway + Wasmer integration demo: 5 of 5 passed.
 Changed Python files: ruff check passed.
 Walkthrough: 72-second captioned presentation of results.json, not a live screen recording.
+Primary submission video: actual timestamped CLI stdout capture, 68.81 seconds, exit 0. Full video decode passed.
